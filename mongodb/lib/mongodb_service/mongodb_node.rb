@@ -104,11 +104,11 @@ class VCAP::Services::MongoDB::Node
     @free_ports = Set.new
     options[:port_range].each {|port| @free_ports << port}
     
-    @mongod_journal = options[:mongod][:journal]
-    @mongod_noprealloc = options[:mongod][:noprealloc]
-    @mongod_quota = options[:mongod][:quota]
-    @mongod_quotafiles = options[:mongod][:quotafiles]
-    @mongod_smallfiles = options[:mongod][:smallfiles]
+    @mongod_journal = options[:mongod_conf][:journal]
+    @mongod_noprealloc = options[:mongod_conf][:noprealloc]
+    @mongod_quota = options[:mongod_conf][:quota]
+    @mongod_quotafiles = options[:mongod_conf][:quotafiles]
+    @mongod_smallfiles = options[:mongod_conf][:smallfiles]
   end
 
   def pre_send_announcement
