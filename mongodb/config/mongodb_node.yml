@@ -18,3 +18,9 @@ port_range:
   last: 45000
 migration_nfs: /mnt/migration
 # z_interval: 30
+mongod:
+  journal: false
+  noprealloc: true
+  quota: true
+  quotafiles: 4
+  smallfiles: true

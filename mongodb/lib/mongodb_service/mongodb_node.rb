@@ -45,7 +45,12 @@ class VCAP::Services::MongoDB::Node
     property :admin,      String,   :required => true
     property :adminpass,  String,   :required => true
     property :db,         String,   :required => true
-
+    
+    property :journal, Boolean, :default  => false
+    property :noprealloc, Boolean, :default  => true
+    property :quota, Boolean, :default  => true
+    property :quotafiles, Integer, :default  => 4
+    
     def listening?
       begin
         TCPSocket.open('localhost', port).close
@@ -98,6 +103,12 @@ class VCAP::Services::MongoDB::Node
 
     @free_ports = Set.new
     options[:port_range].each {|port| @free_ports << port}
+    
+    @mongod_journal = options[:mongod][:journal]
+    @mongod_noprealloc = options[:mongod][:noprealloc]
+    @mongod_quota = options[:mongod][:quota]
+    @mongod_quotafiles = options[:mongod][:quotafiles]
+    @mongod_smallfiles = options[:mongod][:smallfiles]
   end
 
   def pre_send_announcement
@@ -194,6 +205,12 @@ class VCAP::Services::MongoDB::Node
     provisioned_service.admin     = 'admin'
     provisioned_service.adminpass = UUIDTools::UUID.random_create.to_s
     provisioned_service.db        = db
+    
+    provisioned_service.journal   = @mongod_journal
+    provisioned_service.noprealloc= @mongod_noprealloc
+    provisioned_service.quota     = @mongod_quota
+    provisioned_service.quotaFiles= @mongod_quotafiles
+    provisioned_service.smallfiles= @mongod_smallfiles
 
     raise "Cannot save provision_service" unless provisioned_service.save
 
