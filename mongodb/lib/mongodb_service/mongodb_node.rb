@@ -570,6 +570,21 @@ class VCAP::Services::MongoDB::Node
       instance_id = provisioned_service.name
       dir = service_dir(instance_id)
       data_dir = data_dir(dir)
+      
+      # check for an unclean shutdown that leaves a mongod.lock files
+      # these would require a --repair when we start mongod.
+      mongod_lock = File.join(data_dir, "mongod.lock")
+      other_flags=""
+      if File.exists? mongod_lock
+        unless @dont_repair_when_locked
+          File.delete mongod_lock
+          @logger.warn("Mongod in #{} was not shutdown cleanly. Repairing the database on the next start; it will take some times before connections to the DB will be accepted.")
+          other_flags="--repair"
+        else
+          @logger.error("Mongod was not shutdown cleanly. The sysadmin needs to delete #{mongod_lock} and repair the database.")
+        end
+      end
+      
       log_file = log_file(instance_id)
       log_dir = log_dir(instance_id)
 
@@ -583,7 +598,7 @@ class VCAP::Services::MongoDB::Node
       FileUtils.rm_f(config_path)
       File.open(config_path, "w") {|f| f.write(config)}
 
-      cmd = "#{@mongod_path} -f #{config_path}"
+      cmd = "#{@mongod_path} -f #{config_path} #{other_flags}"
       exec(cmd) rescue @logger.error("exec(#{cmd}) failed!")
     end
   end
