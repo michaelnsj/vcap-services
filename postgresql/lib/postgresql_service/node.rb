@@ -367,6 +367,10 @@ class VCAP::Services::Postgresql::Node
           do_revoke_query(db_connection, user, sys_user)
         else
           db_connection.query("grant create on schema public to public")
+          #grant all permissions on tables that will be created
+          db_connection.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO PUBLIC;")
+          db_connection.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO PUBLIC;")
+          db_connection.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO PUBLIC;")
           if get_postgres_version(db_connection) == '9'
             db_connection.query("grant all on all tables in schema public to public")
             db_connection.query("grant all on all sequences in schema public to public")
