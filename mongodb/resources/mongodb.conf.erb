@@ -14,8 +14,8 @@ nohttpinterface = true
 # journaling is currently preallocating 4G of space on disk
 # we can't do that.
 #
-journal    = <%= journal %>
-noprealloc = <%= noprealloc %>
+<%= "#" if journal.nil?  %>journal    = <%= journal %>
+<%= "#" if noprealloc.nil? || noprealloc=='false'  %>noprealloc = <%= noprealloc %>
 
 #with the default parameters:
 # smallfiles = start first container file at 16MB, doubling 4 times.

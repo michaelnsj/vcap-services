@@ -49,7 +49,8 @@ class VCAP::Services::MongoDB::Node
     property :journal, Boolean, :default  => false
     property :noprealloc, Boolean, :default  => true
     property :quota, Boolean, :default  => true
-    property :quotafiles, Integer, :default  => 4
+    property :quotaFiles, Integer, :default  => 4
+    property :smallfiles, Boolean, :default  => true
     
     def listening?
       begin
@@ -104,11 +105,13 @@ class VCAP::Services::MongoDB::Node
     @free_ports = Set.new
     options[:port_range].each {|port| @free_ports << port}
     
-    @mongod_journal = options[:mongod_conf][:journal]
-    @mongod_noprealloc = options[:mongod_conf][:noprealloc]
-    @mongod_quota = options[:mongod_conf][:quota]
-    @mongod_quotafiles = options[:mongod_conf][:quotafiles]
-    @mongod_smallfiles = options[:mongod_conf][:smallfiles]
+    #@logger.warn("mongod_conf: #{options.inspect}")
+    @mongod_journal = options[:mongod_conf]["journal"]
+    @mongod_noprealloc = options[:mongod_conf]["noprealloc"]
+    @mongod_quota = options[:mongod_conf]["quota"]
+    @mongod_quotafiles = options[:mongod_conf]["quotafiles"]
+    @mongod_smallfiles = options[:mongod_conf]["smallfiles"]
+
   end
 
   def pre_send_announcement
@@ -142,9 +145,15 @@ class VCAP::Services::MongoDB::Node
     ProvisionedService.all.each { |provisioned_service|
       @logger.debug("Try to terminate mongod pid:#{provisioned_service.pid}")
       provisioned_service.kill(:SIGTERM)
-      provisioned_service.wait_killed ?
-        @logger.debug("mongod pid:#{provisioned_service.pid} terminated") :
+      if provisioned_service.wait_killed
+        @logger.debug("mongod pid:#{provisioned_service.pid} terminated")
+        #we really have issues with the mongod.lock file: although the server is shutdown
+        #cleanly it does not delete the lock file which causes a repair next time we start.
+        #For now let's remove it here:
+        rm_lockfile(provisioned_service.name)
+      else
         @logger.error("Timeout to terminate mongod pid:#{provisioned_service.pid}")
+      end
     }
   end
 
@@ -195,22 +204,22 @@ class VCAP::Services::MongoDB::Node
     # Cleanup instance dir if it exists
     FileUtils.rm_rf(service_dir(name))
 
-    provisioned_service           = ProvisionedService.new
-    provisioned_service.name      = name
-    provisioned_service.port      = port
-    provisioned_service.plan      = plan
-    provisioned_service.password  = UUIDTools::UUID.random_create.to_s
-    provisioned_service.memory    = @max_memory
-    provisioned_service.pid       = start_instance(provisioned_service)
-    provisioned_service.admin     = 'admin'
-    provisioned_service.adminpass = UUIDTools::UUID.random_create.to_s
-    provisioned_service.db        = db
+    provisioned_service            = ProvisionedService.new
+    provisioned_service.name       = name
+    provisioned_service.port       = port
+    provisioned_service.plan       = plan
+    provisioned_service.password   = UUIDTools::UUID.random_create.to_s
+    provisioned_service.memory     = @max_memory
+    provisioned_service.pid        = start_instance(provisioned_service)
+    provisioned_service.admin      = 'admin'
+    provisioned_service.adminpass  = UUIDTools::UUID.random_create.to_s
+    provisioned_service.db         = db
     
-    provisioned_service.journal   = @mongod_journal
-    provisioned_service.noprealloc= @mongod_noprealloc
-    provisioned_service.quota     = @mongod_quota
-    provisioned_service.quotaFiles= @mongod_quotafiles
-    provisioned_service.smallfiles= @mongod_smallfiles
+    provisioned_service.journal    = @mongod_journal
+    provisioned_service.noprealloc = @mongod_noprealloc
+    provisioned_service.quota      = @mongod_quota
+    provisioned_service.quotaFiles = @mongod_quotafiles
+    provisioned_service.smallfiles = @mongod_smallfiles
 
     raise "Cannot save provision_service" unless provisioned_service.save
 
@@ -263,7 +272,7 @@ class VCAP::Services::MongoDB::Node
     @logger.debug("Provision response: #{response}")
     return response
   rescue => e
-    @logger.error("Error provision instance: #{e}")
+    @logger.error("Error provision instance: #{e}. #{e.backtrace}")
     record_service_log(provisioned_service.name)
     cleanup_service(provisioned_service)
     raise e
@@ -573,6 +582,12 @@ class VCAP::Services::MongoDB::Node
       
       log_file = log_file(instance_id)
       log_dir = log_dir(instance_id)
+      
+      journal = provisioned_service.journal
+      noprealloc = provisioned_service.noprealloc
+      quota = provisioned_service.quota
+      quotaFiles = provisioned_service.quotaFiles
+      smallfiles = provisioned_service.smallfiles
 
       config = @config_template.result(binding)
       config_path = File.join(dir, "mongodb.conf")
@@ -584,21 +599,24 @@ class VCAP::Services::MongoDB::Node
       FileUtils.rm_f(config_path)
       File.open(config_path, "w") {|f| f.write(config)}
 
-      # check for an unclean shutdown that leaves a mongod.lock files
-      # these would require a --repair when we start mongod.
-      mongod_lock = File.join(data_dir, "mongod.lock")
-      other_flags=""
-      if File.exists? mongod_lock
-        unless @dont_repair_when_locked
-          @logger.warn("Mongod in #{} was not shutdown cleanly. Repairing the database on the next start; it will take some time before connections to the DB will be accepted.")
-          @logger.debug("The progress of the --repair is visible in #{log_file}")
-          other_flags="--repair"
-        else
-          @logger.error("Mongod was not shutdown cleanly. The sysadmin needs to delete #{mongod_lock} and repair the database.")
+      repair_first = false
+      unless journal == true
+        # check for an unclean shutdown that leaves a mongod.lock files
+        # these would require a --repair when we start mongod.
+        mongod_lock = File.join(data_dir, "mongod.lock")
+        if File.exists? mongod_lock
+          unless @dont_repair_when_locked
+            @logger.warn("Mongod in #{} was not shutdown cleanly. Repairing the database on the next start; it will take some time before connections to the DB will be accepted.")
+            @logger.debug("The progress of the --repair is visible in #{log_file}")
+            repair_first=true
+          else
+            @logger.error("Mongod was not shutdown cleanly. The sysadmin needs to delete #{mongod_lock} and repair the database.")
+          end
         end
       end
       
-      cmd = "#{@mongod_path} -f #{config_path} #{other_flags}"
+      cmd = "#{@mongod_path} -f #{config_path}"
+      cmd = "#{cmd} --repair; #{cmd}" if repair_first
       exec(cmd) rescue @logger.error("exec(#{cmd}) failed!")
     end
   end
