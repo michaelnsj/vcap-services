@@ -591,7 +591,7 @@ class VCAP::Services::MongoDB::Node
 
       config = @config_template.result(binding)
       config_path = File.join(dir, "mongodb.conf")
-
+      
       FileUtils.mkdir_p(dir)
       FileUtils.mkdir_p(data_dir)
       FileUtils.rm_rf(log_dir)
@@ -761,6 +761,12 @@ class VCAP::Services::MongoDB::Node
     Dir.exists?(service_dir(provisioned_service.name))
   end
 
+  # Returns 1.8.1 or 2.0.1 for example
+  def mongo_version()
+    `#{@mongod_path} --version` =~ /db version v([\d\.\w]*),/
+    $1
+  end
+  
   def rm_lockfile(service_id)
     lockfile = File.join(service_dir(service_id), 'data', 'mongod.lock')
     FileUtils.rm_rf(lockfile)
