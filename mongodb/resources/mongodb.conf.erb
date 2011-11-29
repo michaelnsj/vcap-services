@@ -1,6 +1,8 @@
 dbpath = <%= data_dir %>
 logpath = <%= log_file %>
-logappend = false  # This doesn't works
+#logappend = false  # with mongo, boolean params or considered equal to true regardless of the value
+#so either don't use the apram at all or look for its negated-param when it exists.
+#logappend does not have a negated nologappend param; we comment it out 
 
 bind_ip = 0.0.0.0
 port = <%= port %>
@@ -14,13 +16,13 @@ nohttpinterface = true
 # journaling is currently preallocating 4G of space on disk
 # we can't do that.
 #
-<%= "#" if journal.nil?  %>journal    = <%= journal %>
-<%= "#" if noprealloc.nil? || noprealloc=='false'  %>noprealloc = <%= noprealloc %>
+<%= journal ? "journal=true" : "nojournal=true" %>
+<%= "#" unless noprealloc %>noprealloc = <%= noprealloc %>
 
 #with the default parameters:
 # smallfiles = start first container file at 16MB, doubling 4 times.
 # so this = 240MB per user. (i.e. 16MB container + 32MB + 64MB + 128MB)
 #TODO: investigate ... in fact experience shows 4 files of 16MB.
-quota      = <%= quota %>
-quotaFiles = <%= quotaFiles %>
-smallfiles = <%= smallfiles %>
+<%= "#" unless quota  %>quota      = <%= quota %>
+<%= "#" unless quotaFiles && quotaFiles > -1  %>quotaFiles = <%= quotaFiles %>
+<%= "#" unless smallfiles %>smallfiles = <%= smallfiles %>
