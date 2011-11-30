@@ -105,7 +105,7 @@ class VCAP::Services::MongoDB::Node
     @free_ports = Set.new
     options[:port_range].each {|port| @free_ports << port}
     
-    #@logger.warn("mongod_conf: #{options.to_json}")
+    #@logger.warn("mongod_conf: #{options.to_json} --- #{options[:mongod_conf]['quotafiles']}")
     @mongod_journal = options[:mongod_conf]["journal"]
     @mongod_noprealloc = options[:mongod_conf]["noprealloc"]
     @mongod_quota = options[:mongod_conf]["quota"]
@@ -210,17 +210,18 @@ class VCAP::Services::MongoDB::Node
     provisioned_service.plan       = plan
     provisioned_service.password   = UUIDTools::UUID.random_create.to_s
     provisioned_service.memory     = @max_memory
-    provisioned_service.pid        = start_instance(provisioned_service)
-    provisioned_service.admin      = 'admin'
-    provisioned_service.adminpass  = UUIDTools::UUID.random_create.to_s
-    provisioned_service.db         = db
-    
+
     provisioned_service.journal    = @mongod_journal
     provisioned_service.noprealloc = @mongod_noprealloc
     provisioned_service.quota      = @mongod_quota
     provisioned_service.quotaFiles = @mongod_quotafiles
     provisioned_service.smallfiles = @mongod_smallfiles
 
+    provisioned_service.pid        = start_instance(provisioned_service)
+    provisioned_service.admin      = 'admin'
+    provisioned_service.adminpass  = UUIDTools::UUID.random_create.to_s
+    provisioned_service.db         = db
+    
     raise "Cannot save provision_service" unless provisioned_service.save
 
     username = credential && credential['username'] ? credential['username'] : UUIDTools::UUID.random_create.to_s
