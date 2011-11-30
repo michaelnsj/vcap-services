@@ -105,7 +105,7 @@ class VCAP::Services::MongoDB::Node
     @free_ports = Set.new
     options[:port_range].each {|port| @free_ports << port}
     
-    #@logger.warn("mongod_conf: #{options.inspect}")
+    #@logger.warn("mongod_conf: #{options.to_json}")
     @mongod_journal = options[:mongod_conf]["journal"]
     @mongod_noprealloc = options[:mongod_conf]["noprealloc"]
     @mongod_quota = options[:mongod_conf]["quota"]

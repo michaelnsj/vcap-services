@@ -16,7 +16,7 @@ nohttpinterface = true
 # journaling is currently preallocating 4G of space on disk
 # we can't do that.
 #
-<%= journal ? "journal=true" : "nojournal=true" %>
+<%= journal ? "journal=true" : "journal=false" %>
 <%= "#" unless noprealloc %>noprealloc = <%= noprealloc %>
 
 #with the default parameters:
