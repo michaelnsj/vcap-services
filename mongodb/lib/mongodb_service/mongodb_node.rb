@@ -111,7 +111,6 @@ class VCAP::Services::MongoDB::Node
     @mongod_quota = options[:mongod_conf]["quota"]
     @mongod_quotafiles = options[:mongod_conf]["quotafiles"]
     @mongod_smallfiles = options[:mongod_conf]["smallfiles"]
-
   end
 
   def pre_send_announcement
@@ -127,7 +126,7 @@ class VCAP::Services::MongoDB::Node
         @logger.warn("Service #{provisioned_service.name} in local DB, but not in file system")
         next
       end
-
+      
       begin
         pid = start_instance(provisioned_service)
         provisioned_service.pid = pid
@@ -137,6 +136,7 @@ class VCAP::Services::MongoDB::Node
         @logger.error("Error starting service #{provisioned_service.name}: #{e}")
       end
     end
+    @logger.info("Mongod node: @total_memory= #{@total_memory} --- @available_memory #{@available_memory}")
   end
 
   def shutdown
