@@ -602,22 +602,31 @@ class VCAP::Services::MongoDB::Node
 
       repair_first = false
       unless journal == true
-        # check for an unclean shutdown that leaves a mongod.lock files
+        # check for an unclean shutdown that leaves a mongod.lock files that is not
+        # empty (empty is still synonymous for a clean shutdown sometimes:
+        # https://jira.mongodb.org/browse/SERVER-1706
         # these would require a --repair when we start mongod.
         mongod_lock = File.join(data_dir, "mongod.lock")
         if File.exists? mongod_lock
-          unless @dont_repair_when_locked
-            @logger.warn("Mongod in #{} was not shutdown cleanly. Repairing the database on the next start; it will take some time before connections to the DB will be accepted.")
-            @logger.debug("The progress of the --repair is visible in #{log_file}")
-            repair_first=true
+          if File.size(mongod_lock)>0
+            unless @dont_repair_when_locked
+              @logger.warn("Mongod in #{} was not shutdown cleanly. Repairing the database on the next start; it will take some time before connections to the DB will be accepted.")
+              @logger.debug("The progress of the --repair is visible in #{log_file}")
+              File.delete mongod_lock
+              repair_first=true
+            else
+              @logger.error("Mongod was not shutdown cleanly. The sysadmin needs to delete #{mongod_lock} and repair the database.")
+            end
           else
-            @logger.error("Mongod was not shutdown cleanly. The sysadmin needs to delete #{mongod_lock} and repair the database.")
+            File.delete mongod_lock
           end
         end
       end
       
       cmd = "#{@mongod_path} -f #{config_path}"
-      cmd = "#{cmd} --repair; #{cmd}" if repair_first
+      if repair_first
+        system "#{cmd} --repair" rescue @logger.error("exec(#{cmd} --repair) failed!")
+      end
       exec(cmd) rescue @logger.error("exec(#{cmd}) failed!")
     end
   end
