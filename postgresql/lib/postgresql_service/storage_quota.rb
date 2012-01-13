@@ -30,11 +30,14 @@ class VCAP::Services::Postgresql::Node
       db_connection_sys_user.query("vacuum full")
       db_connection_sys_user.close
       do_grant_query(db_connection,user,sys_user)
+      
+      db_connection_user = postgresql_connect(@postgresql_config["host"],binduser.user,binduser.password,@postgresql_config["port"],name)
+      db_connection_user.query("grant create on schema public to public")
+      db_connection_user.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO PUBLIC;")
+      db_connection_user.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO PUBLIC;")
+      db_connection_user.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO PUBLIC;")
+      db_connection_user.close
     end
-    db_connection.query("grant create on schema public to public")
-    db_connection.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO PUBLIC;")
-    db_connection.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO PUBLIC;")
-    db_connection.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO PUBLIC;")
     if get_postgres_version(db_connection) == '9'
       db_connection.query("grant all on all tables in schema public to public")
       db_connection.query("grant all on all sequences in schema public to public")
@@ -50,6 +53,7 @@ class VCAP::Services::Postgresql::Node
       end
     end
     db_connection.close
+    
     service.quota_exceeded = false
     service.save
     rescue => e
@@ -65,9 +69,6 @@ class VCAP::Services::Postgresql::Node
     name = service.name
     db_connection = postgresql_connect(@postgresql_config["host"],@postgresql_config["user"],@postgresql_config["pass"],@postgresql_config["port"],name)
     db_connection.query("revoke create on schema public from public CASCADE")
-    db_connection.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;")
-    db_connection.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;")
-    db_connection.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM PUBLIC;")
     if get_postgres_version(db_connection) == '9'
       db_connection.query("REVOKE ALL ON ALL TABLES IN SCHEMA PUBLIC from public CASCADE")
       db_connection.query("REVOKE ALL ON ALL SEQUENCES IN SCHEMA PUBLIC from public CASCADE")
@@ -108,9 +109,6 @@ class VCAP::Services::Postgresql::Node
 
   def do_revoke_query(db_connection, user, sys_user)
     db_connection.query("revoke create on schema public from #{user} CASCADE")
-    db_connection.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;")
-    db_connection.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;")
-    db_connection.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM PUBLIC;")
     if get_postgres_version(db_connection) == '9'
       db_connection.query("REVOKE ALL ON ALL TABLES IN SCHEMA PUBLIC from #{user} CASCADE")
       db_connection.query("REVOKE ALL ON ALL SEQUENCES IN SCHEMA PUBLIC from #{user} CASCADE")

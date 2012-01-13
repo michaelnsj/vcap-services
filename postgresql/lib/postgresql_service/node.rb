@@ -362,15 +362,13 @@ class VCAP::Services::Postgresql::Node
       db_connection.query("GRANT CONNECT ON DATABASE #{name} to #{sys_user}")
       db_connection.query("GRANT CONNECT ON DATABASE #{name} to #{user}")
       #Ignore privileges Initializing error. Log only.
+      do_create = false
       begin
         if quota_exceeded then
           do_revoke_query(db_connection, user, sys_user)
         else
+          do_create = true
           db_connection.query("grant create on schema public to public")
-          #grant all permissions on tables that will be created
-          db_connection.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO PUBLIC;")
-          db_connection.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO PUBLIC;")
-          db_connection.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO PUBLIC;")
           if get_postgres_version(db_connection) == '9'
             db_connection.query("grant all on all tables in schema public to public")
             db_connection.query("grant all on all sequences in schema public to public")
@@ -391,6 +389,20 @@ class VCAP::Services::Postgresql::Node
         @logger.error("Could not Initialize user privileges: #{e}")
       end
       db_connection.close
+      if do_create
+        begin
+          # grant all permissions on tables that will be created #THIS DOE SNOT WORK
+          # We need to execute this command as the user himself.
+          db_connection_as_self = postgresql_connect(@postgresql_config["host"],user,password,@postgresql_config["port"],name)
+          db_connection_as_self.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO PUBLIC;")
+          db_connection_as_self.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO PUBLIC;")
+          db_connection_as_self.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO PUBLIC;")
+        rescue PGError => ee
+          @logger.error("Could not Initialize user default privileges: #{ee}")
+        ensure
+          db_connection_as_self.close
+        end
+      end
       true
     rescue PGError => e
       @logger.error("Could not create database user: #{e}")
