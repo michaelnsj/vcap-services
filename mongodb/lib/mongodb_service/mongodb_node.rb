@@ -7,7 +7,6 @@ require "set"
 require "mongo"
 require "timeout"
 
-require "datamapper"
 require "nats/client"
 require "uuidtools"
 
@@ -17,6 +16,7 @@ require "mongodb_service/common"
 
 $LOAD_PATH.unshift File.join(File.dirname(__FILE__), '..', '..', '..', 'base', 'lib')
 require 'base/node'
+require "datamapper_l"
 
 module VCAP
   module Services
@@ -33,6 +33,10 @@ class VCAP::Services::MongoDB::Node
 
   # FIXME only support rw currently
   BIND_OPT = 'rw'
+
+  # Timeout for mongo client operations, node cannot be blocked on any mongo instances.
+  # Default value is 2 seconds
+  MONGO_TIMEOUT = 2
 
   class ProvisionedService
     include DataMapper::Resource
@@ -99,6 +103,9 @@ class VCAP::Services::MongoDB::Node
 
     @config_template = ERB.new(File.read(options[:config_template]))
 
+    @connection_pool = {}
+    @connection_mutex = Mutex.new
+
     DataMapper.setup(:default, options[:local_db])
     DataMapper::auto_upgrade!
 
@@ -111,14 +118,48 @@ class VCAP::Services::MongoDB::Node
     @mongod_quota = options[:mongod_conf]["quota"]
     @mongod_quotafiles = options[:mongod_conf]["quotafiles"]
     @mongod_smallfiles = options[:mongod_conf]["smallfiles"]
+    @mutex = Mutex.new
+  end
+
+  def fetch_port(port=nil)
+    @mutex.synchronize do
+      port ||= @free_ports.first
+      raise "port #{port} is already taken!" unless @free_ports.include?(port)
+      @free_ports.delete(port)
+      port
+    end
+  end
+
+  def return_port(port)
+    @mutex.synchronize do
+      @free_ports << port
+    end
+  end
+
+  def delete_port(port)
+    @mutex.synchronize do
+      @free_ports.delete(port)
+    end
+  end
+
+  def inc_memory(memory)
+    @mutex.synchronize do
+      @available_memory += memory
+    end
+  end
+
+  def dec_memory(memory)
+    @mutex.synchronize do
+      @available_memory -= memory
+    end
   end
 
   def pre_send_announcement
     ProvisionedService.all.each do |provisioned_service|
-      @free_ports.delete(provisioned_service.port)
+      delete_port(provisioned_service.port)
       if provisioned_service.listening?
         @logger.warn("Service #{provisioned_service.name} already listening on port #{provisioned_service.port}")
-        @available_memory -= (provisioned_service.memory || @max_memory)
+        dec_memory(provisioned_service.memory || @max_memory)
         next
       end
 
@@ -172,8 +213,7 @@ class VCAP::Services::MongoDB::Node
     list = []
     ProvisionedService.all.each do |instance|
       begin
-        conn = Mongo::Connection.new(@local_ip, instance.port)
-        conn.db('admin').authenticate(instance.admin, instance.adminpass)
+        conn = connect_and_auth(instance)
         coll = conn.db(instance.db).collection('system.users')
         coll.find().each do |binding|
           credential = {
@@ -186,8 +226,6 @@ class VCAP::Services::MongoDB::Node
         end
       rescue => e
         @logger.warn("Failed fetch user list: #{e.message}")
-      ensure
-        conn.close if conn
       end
     end
     list
@@ -195,11 +233,10 @@ class VCAP::Services::MongoDB::Node
 
   def provision(plan, credential = nil)
     @logger.info("Provision request: plan=#{plan}")
-    port = credential && credential['port'] && @free_ports.include?(credential['port']) ? credential['port'] : @free_ports.first
+    port = credential && credential['port'] ? fetch_port(credential['port']) : fetch_port
     name = credential && credential['name'] ? credential['name'] : UUIDTools::UUID.random_create.to_s
     db   = credential && credential['db']   ? credential['db']   : 'db'
 
-    @free_ports.delete(port)
 
     # Cleanup instance dir if it exists
     FileUtils.rm_rf(service_dir(name))
@@ -241,25 +278,12 @@ class VCAP::Services::MongoDB::Node
     # Add super_user in user table. This user is added to keep node backward
     # compatibile with older version, which depends on this user for backend
     # operations.
-    mongodb_add_user({
-      :port      => provisioned_service.port,
-      :admin     => provisioned_service.admin,
-      :adminpass => provisioned_service.adminpass,
-      :db        => provisioned_service.db,
-      :username  => provisioned_service.admin,
-      :password  => provisioned_service.adminpass
-    })
+    mongodb_add_user(provisioned_service,
+                     provisioned_service.admin,
+                     provisioned_service.adminpass)
 
     # Add an end_user
-    mongodb_add_user({
-      :port      => provisioned_service.port,
-      :admin     => provisioned_service.admin,
-      :adminpass => provisioned_service.adminpass,
-      :db        => provisioned_service.db,
-      :username  => username,
-      :password  => password
-    })
-
+    mongodb_add_user(provisioned_service, username, password)
 
     response = {
       "hostname" => @local_ip,
@@ -291,6 +315,8 @@ class VCAP::Services::MongoDB::Node
   def cleanup_service(provisioned_service)
     @logger.info("Killing #{provisioned_service.name} started with pid #{provisioned_service.pid}")
 
+    close_connection(provisioned_service)
+
     provisioned_service.kill(:SIGKILL) if provisioned_service.running?
 
     dir = service_dir(provisioned_service.name)
@@ -301,8 +327,8 @@ class VCAP::Services::MongoDB::Node
       FileUtils.rm_rf(log_dir)
     end
 
-    @available_memory += provisioned_service.memory
-    @free_ports << provisioned_service.port
+    inc_memory(provisioned_service.memory)
+    return_port(provisioned_service.port)
 
     raise "Could not cleanup service: #{provisioned_service.errors.inspect}" unless provisioned_service.destroy
     true
@@ -318,15 +344,7 @@ class VCAP::Services::MongoDB::Node
     username = credential && credential['username'] ? credential['username'] : UUIDTools::UUID.random_create.to_s
     password = credential && credential['password'] ? credential['password'] : UUIDTools::UUID.random_create.to_s
 
-    mongodb_add_user({
-      :port      => provisioned_service.port,
-      :admin     => provisioned_service.admin,
-      :adminpass => provisioned_service.adminpass,
-      :db        => provisioned_service.db,
-      :username  => username,
-      :password  => password,
-      :bindopt   => bind_opts
-    })
+    mongodb_add_user(provisioned_service, username, password, bind_opts)
 
     response = {
       "hostname" => @local_ip,
@@ -349,15 +367,14 @@ class VCAP::Services::MongoDB::Node
     provisioned_service = ProvisionedService.get(name)
     raise ServiceError.new(ServiceError::NOT_FOUND, name) if provisioned_service.nil?
 
+    if provisioned_service.port != credential['port'] or
+       provisioned_service.db != credential['db']
+      raise ServiceError.new(ServiceError::HTTP_BAD_REQUEST)
+    end
+
     # FIXME  Current implementation: Delete self
     #        Here I presume the user to be deleted is RW user
-    mongodb_remove_user({
-        :port      => credential['port'],
-        :admin     => provisioned_service.admin,
-        :adminpass => provisioned_service.adminpass,
-        :username  => credential['username'],
-        :db        => credential['db']
-      })
+    mongodb_remove_user(provisioned_service, credential['username'])
 
     @logger.debug("Successfully unbind #{credential}")
     true
@@ -375,8 +392,7 @@ class VCAP::Services::MongoDB::Node
     database = provisioned_service.db
 
     # Drop original collections
-    conn = Mongo::Connection.new('127.0.0.1', port)
-    conn.db('admin').authenticate(username, password)
+    conn = connect_and_auth(provisioned_service)
     db = conn.db(database)
     db.collection_names.each do |name|
       if name != 'system.users' && name != 'system.indexes'
@@ -391,8 +407,6 @@ class VCAP::Services::MongoDB::Node
     @logger.debug(output)
     raise 'mongorestore failed' unless res
     true
-  ensure
-    conn.close if conn
   end
 
   def disable_instance(service_credential, binding_credentials)
@@ -459,8 +473,7 @@ class VCAP::Services::MongoDB::Node
     raise "Cannot parse dumpfile stored_service in #{d_file}" if stored_service.nil?
 
     # Provision the new instance using dumped instance files
-    port = @free_ports.first
-    @free_ports.delete(port)
+    port = fetch_port
 
     provisioned_service           = ProvisionedService.new
     provisioned_service.name      = stored_service.name
@@ -511,19 +524,8 @@ class VCAP::Services::MongoDB::Node
     stats = []
     ProvisionedService.all.each do |provisioned_service|
       stat = {}
-      overall_stats = mongodb_overall_stats({
-        :port      => provisioned_service.port,
-        :name      => provisioned_service.name,
-        :admin     => provisioned_service.admin,
-        :adminpass => provisioned_service.adminpass
-      })
-      db_stats = mongodb_db_stats({
-        :port      => provisioned_service.port,
-        :name      => provisioned_service.name,
-        :admin     => provisioned_service.admin,
-        :adminpass => provisioned_service.adminpass,
-        :db        => provisioned_service.db
-      })
+      overall_stats = mongodb_overall_stats(provisioned_service)
+      db_stats = mongodb_db_stats(provisioned_service)
       stat['overall'] = overall_stats
       stat['db'] = db_stats
       stat['name'] = provisioned_service.name
@@ -549,14 +551,36 @@ class VCAP::Services::MongoDB::Node
     {:self => "fail"}
   end
 
+  def connect_and_auth(instance)
+    conn = nil
+    @connection_mutex.synchronize do
+      conn = @connection_pool[instance.port]
+      unless conn and conn.connected?
+        Timeout::timeout(MONGO_TIMEOUT) do
+          conn = Mongo::Connection.new('127.0.0.1', instance.port)
+          auth = conn.db('admin').authenticate(instance.admin, instance.adminpass)
+          raise "Authentication failed, name: #{instance.name}" unless auth
+        end
+        @connection_pool[instance.port] = conn
+        @logger.debug("Connected to #{instance.name}, port No: #{instance.port}")
+      end
+    end
+    conn
+  end
+
+  def close_connection(instance)
+    @connection_mutex.synchronize do
+      conn = @connection_pool[instance.port]
+      conn.close if conn
+      @connection_pool[instance.port] = nil
+    end
+  end
+
   def get_healthz(instance)
-    conn = Mongo::Connection.new(@local_ip, instance.port)
-    auth = conn.db('admin').authenticate(instance.admin, instance.adminpass)
-    auth ? "ok" : "fail"
+    conn = connect_and_auth(instance)
+    "ok"
   rescue => e
     "fail"
-  ensure
-    conn.close if conn
   end
 
   def start_instance(provisioned_service)
@@ -567,7 +591,7 @@ class VCAP::Services::MongoDB::Node
     pid = fork
     if pid
       @logger.debug("Service #{provisioned_service.name} started with pid #{pid}")
-      @available_memory -= memory
+      dec_memory(memory)
       # In parent, detach the child.
       Process.detach(pid)
       pid
@@ -595,7 +619,6 @@ class VCAP::Services::MongoDB::Node
       
       FileUtils.mkdir_p(dir)
       FileUtils.mkdir_p(data_dir)
-      FileUtils.rm_rf(log_dir)
       FileUtils.mkdir_p(log_dir)
       FileUtils.rm_f(config_path)
       File.open(config_path, "w") {|f| f.write(config)}
@@ -683,7 +706,7 @@ class VCAP::Services::MongoDB::Node
         conn = Mongo::Connection.new('127.0.0.1', options[:port])
         user = conn.db('admin').add_user(options[:username], options[:password])
         raise "user not added" if user.nil?
-        @logger.debug("user #{options[:username]} added in db #{options[:db]}")
+        @logger.debug("user #{options[:username]} added in db admin")
         return true
       rescue => e
         @logger.error("Failed add user #{options[:username]}: #{e.message}")
@@ -696,51 +719,44 @@ class VCAP::Services::MongoDB::Node
     conn.close if conn
   end
 
-  def mongodb_add_user(options)
-    @logger.debug("add user in port: #{options[:port]}, db: #{options[:db]}")
-    conn = Mongo::Connection.new('127.0.0.1', options[:port])
-    auth = conn.db('admin').authenticate(options[:admin], options[:adminpass])
-    db = conn.db(options[:db])
-    db.add_user(options[:username], options[:password])
-    @logger.debug("user #{options[:username]} added")
-  ensure
-    conn.close if conn
+  def mongodb_add_user(instance, username, password, bind_opts=nil)
+    conn = connect_and_auth(instance)
+    Timeout::timeout(MONGO_TIMEOUT) do
+      conn.db(instance.db).add_user(username, password)
+    end
   end
 
-  def mongodb_remove_user(options)
-    @logger.debug("remove user in port: #{options[:port]}, db: #{options[:db]}")
-    conn = Mongo::Connection.new('127.0.0.1', options[:port])
-    auth = conn.db('admin').authenticate(options[:admin], options[:adminpass])
-    db = conn.db(options[:db])
-    db.remove_user(options[:username])
-    @logger.debug("user #{options[:username]} removed")
-  ensure
-    conn.close if conn
+  def mongodb_remove_user(instance, username)
+    conn = connect_and_auth(instance)
+    Timeout::timeout(MONGO_TIMEOUT) do
+      conn.db(instance.db).remove_user(username)
+    end
   end
 
-  def mongodb_overall_stats(options)
-    conn = Mongo::Connection.new('127.0.0.1', options[:port])
-    auth = conn.db('admin').authenticate(options[:admin], options[:adminpass])
-    # The following command is not documented in mongo's official doc.
-    # But it works like calling db.serverStatus from client. And 10gen support has
-    # confirmed it's safe to call it in such way.
-    conn.db('admin').command({:serverStatus => 1})
+  def mongodb_overall_stats(instance)
+    conn = connect_and_auth(instance)
+
+    Timeout::timeout(MONGO_TIMEOUT) do
+      # The following command is not documented in mongo's official doc.
+      # But it works like calling db.serverStatus from client. And 10gen support has
+      # confirmed it's safe to call it in such way.
+      conn.db('admin').command({:serverStatus => 1})
+    end
   rescue => e
-    @logger.warn("Failed mongodb_overall_stats: #{e.message}, options: #{options}")
-    "Failed mongodb_overall_stats: #{e.message}, options: #{options}"
-  ensure
-    conn.close if conn
+    warning = "Failed mongodb_overall_stats: #{e.message}, instance: #{instance.name}"
+    @logger.warn(warning)
+    warning
   end
 
-  def mongodb_db_stats(options)
-    conn = Mongo::Connection.new('127.0.0.1', options[:port])
-    auth = conn.db('admin').authenticate(options[:admin], options[:adminpass])
-    conn.db(options[:db]).stats()
+  def mongodb_db_stats(instance)
+    conn = connect_and_auth(instance)
+    Timeout::timeout(MONGO_TIMEOUT) do
+      conn.db(instance.db).stats()
+    end
   rescue => e
-    @logger.warn("Failed mongodb_db_stats: #{e.message}, options: #{options}")
-    "Failed mongodb_db_stats: #{e.message}, options: #{options}"
-  ensure
-    conn.close if conn
+    warning = "Failed mongodb_db_stats: #{e.message}, instance: #{instance.name}"
+    @logger.warn(warning)
+    warning
   end
 
   def transition_dir(service_id)

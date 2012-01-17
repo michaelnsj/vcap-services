@@ -92,7 +92,10 @@ class VCAP::Services::Base::Gateway
              :mbus => @config[:mbus],
              :node_timeout => node_timeout,
              :z_interval => @config[:z_interval],
-             :allow_over_provisioning => @config[:allow_over_provisioning]
+             :allow_over_provisioning => @config[:allow_over_provisioning],
+             :max_nats_payload => @config[:max_nats_payload],
+             :additional_options => additional_options,
+             :status => @config[:status]
            )
       sg = async_gateway_class.new(
              :proxy   => @config[:proxy],
@@ -102,7 +105,8 @@ class VCAP::Services::Base::Gateway
              :provisioner => sp,
              :node_timeout => node_timeout,
              :cloud_controller_uri => cloud_controller_uri,
-             :check_orphan_interval => @config[:check_orphan_interval] || -1
+             :check_orphan_interval => @config[:check_orphan_interval],
+             :double_check_orphan_interval => @config[:double_check_orphan_interval]
            )
       Thin::Server.start(@config[:host], @config[:port], sg)
     end
@@ -127,5 +131,9 @@ class VCAP::Services::Base::Gateway
     config[:token] = token.to_s
 
     config
+  end
+
+  def additional_options
+    {}
   end
 end
