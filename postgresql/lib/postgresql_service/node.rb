@@ -361,7 +361,8 @@ class VCAP::Services::Postgresql::Node
     raise PostgresqlError.new(PostgresqlError::POSTGRESQL_CRED_NOT_FOUND, credential.inspect) if res[0]['count'].to_i<=0
     unbinduser = provisionedservice.bindusers.get(user)
     if unbinduser != nil then
-      delete_database_user(unbinduser,name)
+      binduser_to_reassign = provisionedservice.bindusers.all(:default_user => true)[0]
+      delete_database_user(unbinduser,name,binduser_to_reassign)
       if not unbinduser.destroy
         @logger.error("Could not delete entry: #{unbinduser.errors.inspect}")
       end
@@ -444,23 +445,28 @@ class VCAP::Services::Postgresql::Node
       end
       db_connection.close
       if do_create
-        begin
-          # grant all permissions on tables that will be created #THIS DOE SNOT WORK
-          # We need to execute this command as the user himself.
-          db_connection_as_self = postgresql_connect(@postgresql_config["host"],user,password,@postgresql_config["port"],name)
-          db_connection_as_self.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO PUBLIC;")
-          db_connection_as_self.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO PUBLIC;")
-          db_connection_as_self.query("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO PUBLIC;")
-        rescue PGError => ee
-          @logger.error("Could not Initialize user default privileges: #{ee}")
-        ensure
-          db_connection_as_self.close
-        end
+        alter_default_privileges(user,password,name,"GRANT ALL")
       end
       true
     rescue PGError => e
       @logger.error("Could not create database user: #{e}")
       false
+    end
+  end
+  
+  def alter_default_privileges(user,password,db_name,grant_or_revoke_all="GRANT ALL")
+    begin
+      to_from = /GRANT/ =~ grant_or_revoke_all ? "TO" : "FROM"
+      # grant all permissions on tables that will be created #THIS DOE SNOT WORK
+      # We need to execute this command as the user himself.
+      db_connection_as_self = postgresql_connect(@postgresql_config["host"],user,password,@postgresql_config["port"],db_name)
+      db_connection_as_self.query("ALTER DEFAULT PRIVILEGES IN SCHEMA PUBLIC #{grant_or_revoke_all} ON TABLES #{to_from} PUBLIC;")
+      db_connection_as_self.query("ALTER DEFAULT PRIVILEGES IN SCHEMA PUBLIC #{grant_or_revoke_all} ON SEQUENCES #{to_from} PUBLIC;")
+      db_connection_as_self.query("ALTER DEFAULT PRIVILEGES IN SCHEMA PUBLIC #{grant_or_revoke_all} ON FUNCTIONS #{to_from} PUBLIC;")
+    rescue PGError => ee
+      @logger.error("Could not set user default privileges: #{ee}")
+    ensure
+      db_connection_as_self.close
     end
   end
 
@@ -484,8 +490,12 @@ class VCAP::Services::Postgresql::Node
     end
   end
 
-  def delete_database_user(binduser,db)
+  def delete_database_user(binduser,db,binduser_to_reassign=nil)
     @logger.info("Delete user #{binduser.user}/#{binduser.sys_user}")
+    # we need to connect under the user's identity to revoke the default privileges.
+    # either that either access the pg_catalog.pg_default_acl table directly and switch the flags
+    alter_default_privileges(binduser.user,binduser.password,db,"REVOKE ALL")
+    alter_default_privileges(binduser.sys_user,binduser.sys_password,db,"REVOKE ALL")
     db_connection = postgresql_connect(@postgresql_config["host"],@postgresql_config["user"],@postgresql_config["pass"],@postgresql_config["port"],db)
     begin
       db_connection.query("select pg_terminate_backend(procpid) from pg_stat_activity where usename = '#{binduser.user}' or usename = '#{binduser.sys_user}'")
@@ -494,8 +504,17 @@ class VCAP::Services::Postgresql::Node
     end
     #Revoke dependencies. Ignore error.
     begin
-      db_connection.query("DROP OWNED BY #{binduser.user}")
-      db_connection.query("DROP OWNED BY #{binduser.sys_user}")
+      if (binduser_to_reassign && binduser_to_reassign!=binduser)
+        @logger.info("Reassigned owned by #{binduser.user}/#{binduser.sys_user} to #{binduser_to_reassign.user}/#{binduser_to_reassign.sys_user}")
+        db_connection.query("REASSIGN OWNED BY #{binduser.user} TO #{binduser_to_reassign.user}")
+        db_connection.query("REASSIGN OWNED BY #{binduser.sys_user} TO #{binduser_to_reassign.sys_user}")       
+        @logger.info("Reassigned owned by owned by users #{binduser.user}/#{binduser.sys_user} to #{binduser_to_reassign.user}/#{binduser_to_reassign.sys_user}")
+      else
+        @logger.info("Drop owned by users #{binduser.user}/#{binduser.sys_user}")
+        db_connection.query("DROP OWNED BY #{binduser.user}")
+        db_connection.query("DROP OWNED BY #{binduser.sys_user}")
+        @logger.info("Completed 'drop by owned' by users #{binduser.user}/#{binduser.sys_user}")
+      end
       if get_postgres_version(db_connection) == '9'
         db_connection.query("REVOKE ALL ON ALL TABLES IN SCHEMA PUBLIC from #{binduser.user} CASCADE")
         db_connection.query("REVOKE ALL ON ALL SEQUENCES IN SCHEMA PUBLIC from #{binduser.user} CASCADE")
