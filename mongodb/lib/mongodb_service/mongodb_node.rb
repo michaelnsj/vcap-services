@@ -272,7 +272,7 @@ class VCAP::Services::MongoDB::Node
       :port      => provisioned_service.port,
       :username  => provisioned_service.admin,
       :password  => provisioned_service.adminpass,
-      :times     => 10
+      :times     => 25 #10 is really not enough on micro-clouds
     })
 
     # Add super_user in user table. This user is added to keep node backward
@@ -708,6 +708,9 @@ class VCAP::Services::MongoDB::Node
         raise "user not added" if user.nil?
         @logger.debug("user #{options[:username]} added in db admin")
         return true
+      rescue Mongo::ConnectionFailure => ce
+        @logger.warn "Mongo::ConnectionFailure; mongod is not started yet; #{ce.message}"
+        sleep 1
       rescue => e
         @logger.error("Failed add user #{options[:username]}: #{e.message}")
         sleep 1
