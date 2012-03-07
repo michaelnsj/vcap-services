@@ -171,7 +171,14 @@ class VCAP::Services::MongoDB::Node
       begin
         pid = start_instance(provisioned_service)
         provisioned_service.pid = pid
-        raise "Cannot save provision_service" unless provisioned_service.save
+        unless provisioned_service.save
+          dm_err = ""
+          provisioned_service.errors.each do |ee|
+            @logger.error("DataMapper error: #{ee}")
+            dm_err = ee
+          end
+          raise "Cannot save provision_service #{dm_err}"
+        end
       rescue => e
         provisioned_service.kill
         @logger.error("Error starting service #{provisioned_service.name}: #{e}")
@@ -259,7 +266,14 @@ class VCAP::Services::MongoDB::Node
     provisioned_service.adminpass  = UUIDTools::UUID.random_create.to_s
     provisioned_service.db         = db
     
-    raise "Cannot save provision_service" unless provisioned_service.save
+    unless provisioned_service.save
+      dm_err = ""
+      provisioned_service.errors.each do |ee|
+        @logger.error("DataMapper error: #{ee}")
+        dm_err = ee
+      end
+      raise "Cannot save provision_service #{dm_err}"
+    end
 
     username = credential && credential['username'] ? credential['username'] : UUIDTools::UUID.random_create.to_s
     password = credential && credential['password'] ? credential['password'] : UUIDTools::UUID.random_create.to_s
@@ -645,12 +659,20 @@ class VCAP::Services::MongoDB::Node
           end
         end
       end
-      
       cmd = "#{@mongod_path} -f #{config_path}"
       if repair_first
         system "#{cmd} --repair" rescue @logger.error("exec(#{cmd} --repair) failed!")
       end
-      exec(cmd) rescue @logger.error("exec(#{cmd}) failed!")
+      begin
+        exec(cmd)
+      rescue
+        if File.exists?("/tmp")
+          @logger.error("exec(#{cmd}) failed attempting to log the output of the same command")
+          exec("#{cmd} > /tmp/vcap_mongod_fail.log 2>&1") rescue @logger.error("exec(#{cmd}) failed again! See /tmp/vcap_mongod_fail.log for the output.")
+        else
+          @logger.error("exec(#{cmd}) failed!")
+        end
+      end
     end
   end
 
