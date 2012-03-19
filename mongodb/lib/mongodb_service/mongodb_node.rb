@@ -659,7 +659,7 @@ class VCAP::Services::MongoDB::Node
           end
         end
       end
-      cmd = "ulimit -v #{provisioned_service.memory}000; #{@mongod_path} -f #{config_path}"
+      cmd = "export CGROUP_DAEMON='memory:ubuntu/mongod'; #{@mongod_path} -f #{config_path}"
       if repair_first
         system "#{cmd} --repair" rescue @logger.error("exec(#{cmd} --repair) failed!")
       end
