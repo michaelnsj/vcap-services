@@ -661,7 +661,7 @@ class VCAP::Services::MongoDB::Node
       end
       cmd = "#{@mongod_path} -f #{config_path}"
       if repair_first
-        system "#{cmd} --repair" rescue @logger.error("exec(#{cmd} --repair) failed!")
+        system "ulimit -v #{@memory}000; #{cmd} --repair" rescue @logger.error("exec(#{cmd} --repair) failed!")
       end
       begin
         exec(cmd)
