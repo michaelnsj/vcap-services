@@ -6,11 +6,16 @@ require "uuidtools"
 
 $LOAD_PATH.unshift File.dirname(__FILE__)
 require 'base/base'
+require 'base/job/async_job'
+require 'base/job/snapshot'
+require 'base/job/serialization'
 require 'barrier'
 require 'service_message'
 
 class VCAP::Services::Base::Provisioner < VCAP::Services::Base::Base
   include VCAP::Services::Internal
+  include VCAP::Services::AsyncJob
+  include VCAP::Services::Snapshot
 
   BARRIER_TIMEOUT = 2
   MASKED_PASSWORD = '********'
@@ -19,11 +24,10 @@ class VCAP::Services::Base::Provisioner < VCAP::Services::Base::Base
     super(options)
     @version   = options[:version]
     @node_timeout = options[:node_timeout]
-    @allow_over_provisioning = options[:allow_over_provisioning]
     @nodes     = {}
     @prov_svcs = {}
     @handles_for_check_orphan = {}
-    @orphan_mutex = Mutex.new
+    @plan_mgmt = options[:plan_management] && options[:plan_management][:plans] || {}
     reset_orphan_stat
 
     z_interval = options[:z_interval] || 30
@@ -38,6 +42,12 @@ class VCAP::Services::Base::Provisioner < VCAP::Services::Base::Base
     end
 
     EM.add_periodic_timer(60) { process_nodes }
+  end
+
+  def create_redis(opt)
+    redis_client = ::Redis.new(opt)
+    raise "Can't connect to redis:#{opt.inspect}" unless redis_client
+    redis_client
   end
 
   def flavor
@@ -75,28 +85,30 @@ class VCAP::Services::Base::Provisioner < VCAP::Services::Base::Base
   end
 
   def process_nodes
-    @nodes.delete_if {|_, timestamp| Time.now.to_i - timestamp > 300}
+    @nodes.delete_if {|_, node| Time.now.to_i - node["time"] > 300}
+  end
+
+  def pre_send_announcement
   end
 
   def on_connect_node
     @logger.debug("[#{service_description}] Connected to node mbus..")
-    @node_nats.subscribe("#{service_name}.announce") { |msg|
-      on_node_announce(msg)
-    }
-    @node_nats.subscribe("#{service_name}.node_handles") { |msg| on_node_handles(msg) }
-    @node_nats.subscribe("#{service_name}.handles") {|msg, reply| on_query_handles(msg, reply) }
-    @node_nats.subscribe("#{service_name}.update_service_handle") {|msg, reply| on_update_service_handle(msg, reply) }
+    %w[announce node_handles handles update_service_handle].each do |op|
+      eval %[@node_nats.subscribe("#{service_name}.#{op}") { |msg, reply| on_#{op}(msg, reply) }]
+    end
+
+    pre_send_announcement()
     @node_nats.publish("#{service_name}.discover")
   end
 
-  def on_node_announce(msg)
+  def on_announce(msg, reply=nil)
     @logger.debug("[#{service_description}] Received node announcement: #{msg}")
     announce_message = Yajl::Parser.parse(msg)
-    @nodes[announce_message["id"]] = Time.now.to_i if announce_message["id"]
+    @nodes[announce_message["id"]] = announce_message.merge({"time" => Time.now.to_i}) if announce_message["id"]
   end
 
   # query all handles for a given instance
-  def on_query_handles(instance, reply)
+  def on_handles(instance, reply)
     @logger.debug("[#{service_description}] Receive query handles request for instance: #{instance}")
     if instance.empty?
       res = Yajl::Encoder.encode(@prov_svcs)
@@ -107,27 +119,27 @@ class VCAP::Services::Base::Provisioner < VCAP::Services::Base::Base
     @node_nats.publish(reply, res)
   end
 
-  def on_node_handles(msg)
+  def on_node_handles(msg, reply)
     @logger.debug("[#{service_description}] Received node handles")
     response = NodeHandlesReport.decode(msg)
     nid = response.node_id
-    @orphan_mutex.synchronize do
-      response.instances_list.each do |ins|
-        @staging_orphan_instances[nid] ||= []
-        @staging_orphan_instances[nid] << ins unless @handles_for_check_orphan.index { |h| h["service_id"] == ins }
-      end
-      response.bindings_list.each do |bind|
-        @staging_orphan_bindings[nid] ||= []
-        @staging_orphan_bindings[nid] << bind unless @handles_for_check_orphan.index do |h|
-          h["credentials"]["name"] == bind["name"] and h["credentials"]["username"] == bind["username"]
-        end
-      end
-      oi_count = @staging_orphan_instances.values.reduce(0) { |m, v| m += v.count }
-      ob_count = @staging_orphan_bindings.values.reduce(0) { |m, v| m += v.count }
-      @logger.debug("Staging Orphans: Instances: #{oi_count}; Bindings: #{ob_count}")
+    response.instances_list.each do |ins|
+      @staging_orphan_instances[nid] ||= []
+      @staging_orphan_instances[nid] << ins unless @handles_for_check_orphan.index { |h| h["service_id"] == ins }
     end
+    response.bindings_list.each do |bind|
+      @staging_orphan_bindings[nid] ||= []
+      @staging_orphan_bindings[nid] << bind unless @handles_for_check_orphan.index do |h|
+        instance = h["credentials"]["name"]
+        username = h["credentials"]["username"] || h["credentials"]["user"]
+        instance == bind["name"] && username == bind["username"]
+      end
+    end
+    oi_count = @staging_orphan_instances.values.reduce(0) { |m, v| m += v.count }
+    ob_count = @staging_orphan_bindings.values.reduce(0) { |m, v| m += v.count }
+    @logger.debug("Staging Orphans: Instances: #{oi_count}; Bindings: #{ob_count}")
   rescue => e
-    @logger.warn(e)
+    @logger.warn("Exception at on_node_handles #{e}")
   end
 
   def check_orphan(handles, &blk)
@@ -137,7 +149,7 @@ class VCAP::Services::Base::Provisioner < VCAP::Services::Base::Base
     @node_nats.publish("#{service_name}.check_orphan","Send Me Handles")
     blk.call(success)
   rescue => e
-    @logger.warn(e)
+    @logger.warn("Exception at check_orphan #{e}")
     if e.instance_of? ServiceError
       blk.call(failure(e))
     else
@@ -147,32 +159,27 @@ class VCAP::Services::Base::Provisioner < VCAP::Services::Base::Base
 
   def double_check_orphan(handles)
     @logger.debug("[#{service_description}] Double check the orphan result")
-    @orphan_mutex.synchronize do
-      @staging_orphan_instances.each do |nid, oi_list|
-        oi_list.each do |oi|
-          @final_orphan_instances[nid] ||= []
-          @final_orphan_instances[nid] << oi unless handles.index { |h| h["service_id"] == oi }
-        end
+    @staging_orphan_instances.each do |nid, oi_list|
+      oi_list.each do |oi|
+        @final_orphan_instances[nid] ||= []
+        @final_orphan_instances[nid] << oi unless handles.index { |h| h["service_id"] == oi }
       end
-      @staging_orphan_bindings.each do |nid, ob_list|
-        ob_list.each do |ob|
-          @final_orphan_bindings[nid] ||= []
-          @final_orphan_bindings[nid] << ob unless handles.index do |h|
-            h["credentials"]["name"] == ob["name"] and h["credentials"]["username"] == ob["username"]
-          end
-        end
-      end
-      oi_count = @final_orphan_instances.values.reduce(0) { |m, v| m += v.count }
-      ob_count = @final_orphan_bindings.values.reduce(0) { |m, v| m += v.count }
-      @logger.debug("Final Orphans: Instances: #{oi_count}; Bindings: #{ob_count}")
     end
+    @staging_orphan_bindings.each do |nid, ob_list|
+      ob_list.each do |ob|
+        @final_orphan_bindings[nid] ||= []
+        @final_orphan_bindings[nid] << ob unless handles.index do |h|
+          instance = h["credentials"]["name"]
+          username = h["credentials"]["username"] || h["credentials"]["user"]
+          instance == ob["name"] && username == ob["username"]
+        end
+      end
+    end
+    oi_count = @final_orphan_instances.values.reduce(0) { |m, v| m += v.count }
+    ob_count = @final_orphan_bindings.values.reduce(0) { |m, v| m += v.count }
+    @logger.debug("Final Orphans: Instances: #{oi_count}; Bindings: #{ob_count}")
   rescue => e
-    @logger.warn(e)
-    if e.instance_of? ServiceError
-      blk.call(failure(e))
-    else
-      blk.call(internal_fail)
-    end
+    @logger.warn("Exception at double_check_orphan #{e}")
   end
 
   def purge_orphan(orphan_ins_hash,orphan_bind_hash, &blk)
@@ -199,7 +206,7 @@ class VCAP::Services::Base::Provisioner < VCAP::Services::Base::Base
     end
     blk.call(success)
   rescue => e
-    @logger.warn(e)
+    @logger.warn("Exception at purge_orphan #{e}")
     if e.instance_of? ServiceError
       blk.call(failure(e))
     else
@@ -250,7 +257,7 @@ class VCAP::Services::Base::Provisioner < VCAP::Services::Base::Base
       if e.instance_of? ServiceError
         blk.call(failure(e))
       else
-        @logger.warn(e)
+        @logger.warn("Exception at unprovision_service #{e}")
         blk.call(internal_fail)
       end
     end
@@ -259,28 +266,38 @@ class VCAP::Services::Base::Provisioner < VCAP::Services::Base::Base
   def provision_service(request, prov_handle=nil, &blk)
     @logger.debug("[#{service_description}] Attempting to provision instance (request=#{request.extract})")
     subscription = nil
-    barrier = VCAP::Services::Base::Barrier.new(:timeout => BARRIER_TIMEOUT, :callbacks => @nodes.length) do |responses|
-      @logger.debug("[#{service_description}] Found the following nodes: #{responses.inspect}")
-      @node_nats.unsubscribe(subscription)
-      unless responses.empty?
-        provision_node(request, responses, prov_handle, blk)
+    plan = request.plan || "free"
+    plan_nodes = @nodes.select{ |_, node| node["plan"] == plan }
+    @logger.debug("Going to query nodes #{plan_nodes}")
+    if plan_nodes.count > 0
+      barrier = VCAP::Services::Base::Barrier.new(:timeout => BARRIER_TIMEOUT, :callbacks => plan_nodes.length) do |responses|
+        @logger.debug("[#{service_description}] Found the following nodes: #{responses.inspect}")
+        @node_nats.unsubscribe(subscription)
+        provision_node(request, responses, prov_handle, blk) unless responses.empty?
       end
+      req = Yajl::Encoder.encode({"plan" => plan})
+      subscription = @node_nats.request("#{service_name}.discover", req) {|msg| barrier.call(msg)}
+    else
+      @logger.error("Unknown plan(#{plan})")
+      blk.call(failure(ServiceError.new(ServiceError::UNKNOWN_PLAN, plan)))
     end
-    subscription = @node_nats.request("#{service_name}.discover") {|msg| barrier.call(msg)}
   rescue => e
-    @logger.warn(e)
+    @logger.warn("Exception at provision_service #{e}")
     blk.call(internal_fail)
   end
 
   def provision_node(request, node_msgs, prov_handle, blk)
     @logger.debug("[#{service_description}] Provisioning node (request=#{request.extract}, nnodes=#{node_msgs.length})")
+    plan = request.plan
     nodes = node_msgs.map { |msg| Yajl::Parser.parse(msg.first) }
+    allow_over_provisioning = @plan_mgmt[plan.to_sym] && @plan_mgmt[plan.to_sym][:allow_over_provisioning] || false
+    @logger.debug("Pick best node from:  #{nodes}")
     best_node = nodes.max_by { |node| node_score(node) }
-    if best_node && ( @allow_over_provisioning || node_score(best_node) > 0 )
+    if best_node && ( allow_over_provisioning || node_score(best_node) > 0 )
       best_node = best_node["id"]
       @logger.debug("[#{service_description}] Provisioning on #{best_node}")
       prov_req = ProvisionRequest.new
-      prov_req.plan = request.plan
+      prov_req.plan = plan
       # use old credentials to provision a service if provided.
       prov_req.credentials = prov_handle["credentials"] if prov_handle
       subscription = nil
@@ -374,7 +391,7 @@ class VCAP::Services::Base::Provisioner < VCAP::Services::Base::Base
       if e.instance_of? ServiceError
         blk.call(failure(e))
       else
-        @logger.warn(e)
+        @logger.warn("Exception at bind_instance #{e}")
         blk.call(internal_fail)
       end
     end
@@ -419,7 +436,7 @@ class VCAP::Services::Base::Provisioner < VCAP::Services::Base::Base
       if e.instance_of? ServiceError
         blk.call(failure(e))
       else
-        @logger.warn(e)
+        @logger.warn("Exception at unbind_instance #{e}")
         blk.call(internal_fail)
       end
     end
@@ -461,7 +478,7 @@ class VCAP::Services::Base::Provisioner < VCAP::Services::Base::Base
       if e.instance_of? ServiceError
         blk.call(failure(e))
       else
-        @logger.warn(e)
+        @logger.warn("Exception at restore_instance #{e}")
         blk.call(internal_fail)
       end
     end
@@ -546,8 +563,118 @@ class VCAP::Services::Base::Provisioner < VCAP::Services::Base::Base
       end
     end
   rescue => e
-    @logger.warn(e)
+    @logger.warn("Exception at recover #{e}")
     blk.call(internal_fail)
+  end
+
+  # Create a create_snapshot job and return the job object.
+  #
+  def create_snapshot(service_id, &blk)
+    @logger.debug("Create snapshot job for service_id=#{service_id}")
+    svc = @prov_svcs[service_id]
+    raise ServiceError.new(ServiceError::NOT_FOUND, service_id) unless svc
+    job_id = create_snapshot_job.create(:service_id => service_id, :node_id =>find_node(service_id))
+    job = get_job(job_id)
+    @logger.info("CreateSnapshotJob created: #{job.inspect}")
+    blk.call(success(job))
+  rescue => e
+    handle_error(e, &blk)
+  end
+
+  # Get detail job information by job id.
+  #
+  def job_details(service_id, job_id, &blk)
+    @logger.debug("Get job_id=#{job_id} for service_id=#{service_id}")
+    svc = @prov_svcs[service_id]
+    raise ServiceError.new(ServiceError::NOT_FOUND, service_id) unless svc
+    job = get_job(job_id)
+    raise ServiceError.new(ServiceError::NOT_FOUND, job_id) unless job
+    blk.call(success(job))
+  rescue => e
+    handle_error(e, &blk)
+  end
+
+  # Get detail snapshot information
+  #
+  def get_snapshot(service_id, snapshot_id, &blk)
+    @logger.debug("Get snapshot_id=#{snapshot_id} for service_id=#{service_id}")
+    svc = @prov_svcs[service_id]
+    raise ServiceError.new(ServiceError::NOT_FOUND, service_id) unless svc
+    snapshot = snapshot_details(service_id, snapshot_id)
+    raise ServiceError.new(ServiceError::NOT_FOUND, snapshot_id) unless snapshot
+    blk.call(success(snapshot))
+  rescue => e
+    handle_error(e, &blk)
+  end
+
+  # Get all snapshots related to an instance
+  #
+  def enumerate_snapshots(service_id, &blk)
+    @logger.debug("Get snapshots for service_id=#{service_id}")
+    svc = @prov_svcs[service_id]
+    raise ServiceError.new(ServiceError::NOT_FOUND, service_id) unless svc
+    snapshots = service_snapshots(service_id)
+    blk.call(success({:snapshots => snapshots}))
+  rescue => e
+    handle_error(e, &blk)
+  end
+
+  def rollback_snapshot(service_id, snapshot_id, &blk)
+    @logger.debug("Rollback snapshot=#{snapshot_id} for service_id=#{service_id}")
+    svc = @prov_svcs[service_id]
+    raise ServiceError.new(ServiceError::NOT_FOUND, service_id) unless svc
+    snapshot = snapshot_details(service_id, snapshot_id)
+    raise ServiceError.new(ServiceError::NOT_FOUND, snapshot_id) unless snapshot
+    job_id = rollback_snapshot_job.create(:service_id => service_id, :snapshot_id => snapshot_id,
+                  :node_id => find_node(service_id))
+    job = get_job(job_id)
+    @logger.info("RoallbackSnapshotJob created: #{job.inspect}")
+    blk.call(success(job))
+  rescue => e
+    handle_error(e, &blk)
+  end
+
+  # Generate a url for user to download serialized data.
+  def get_serialized_url(service_id, &blk)
+    @logger.debug("get serialized url for service_id=#{service_id}")
+    svc = @prov_svcs[service_id]
+    raise ServiceError.new(ServiceError::NOT_FOUND, service_id) unless svc
+    job_id = create_serialized_url_job.create(:service_id => service_id, :node_id => find_node(service_id))
+    job = get_job(job_id)
+    blk.call(success(job))
+  rescue => e
+    handle_error(e, &blk)
+  end
+
+  #
+  def import_from_url(service_id, url, &blk)
+    @logger.debug("import serialized data from url:#{url} for service_id=#{service_id}")
+    svc = @prov_svcs[service_id]
+    raise ServiceError.new(ServiceError::NOT_FOUND, service_id) unless svc
+    job_id = import_from_url_job.create(:service_id => service_id, :url => url, :node_id => find_node(service_id))
+    job = get_job(job_id)
+    blk.call(success(job))
+  rescue => e
+    wrap_error(e, &blk)
+  end
+
+  def import_from_data(service_id, req, &blk)
+    @logger.debug("import serialized data from request for service_id=#{service_id}")
+    svc = @prov_svcs[service_id]
+    raise ServiceError.new(ServiceError::NOT_FOUND, service_id) unless svc
+    temp_path = File.join(@upload_temp_dir, "#{service_id}.gz")
+    # clean up previous upload
+    FileUtils.rm_rf(temp_path)
+
+    File.open(temp_path, "wb+") do |f|
+      f.write(Base64.decode64(req.data))
+      f.fsync
+    end
+    job_id = import_from_data_job.create(:service_id => service_id, :temp_file_path => temp_path, :node_id => find_node(service_id))
+    job = get_job(job_id)
+    blk.call(success(job))
+  rescue => e
+    handle_error(e, &blk)
   end
 
   # convert symbol key to string key
@@ -601,15 +728,28 @@ class VCAP::Services::Base::Provisioner < VCAP::Services::Base::Base
       end
     end
 
+    plan_mgmt = []
+    @plan_mgmt.each do |plan, v|
+      plan_nodes = @nodes.select { |_, node| node["plan"] == plan.to_s }.values
+      score = plan_nodes.inject(0) { |sum, node| sum + node_score(node) }
+      plan_mgmt << {
+        :plan => plan,
+        :score => score,
+        :low_water => v[:low_water],
+        :high_water => v[:high_water]
+      }
+    end
+
     varz = {
       :nodes => @nodes,
       :prov_svcs => svcs,
       :orphan_instances => orphan_instances,
-      :orphan_bindings => orphan_bindings
+      :orphan_bindings => orphan_bindings,
+      :plans => plan_mgmt
     }
     return varz
   rescue => e
-    @logger.warn(e)
+    @logger.warn("Exception at varz_details #{e}")
   end
 
   def healthz_details()
@@ -644,16 +784,41 @@ class VCAP::Services::Base::Provisioner < VCAP::Services::Base::Base
     }
   end
 
-  # Service Provisioner subclasses must implement the following
-  # methods
+  # handle request exception
+  def handle_error(e, &blk)
+    @logger.warn("Exception at handle_error #{e}")
+    if e.instance_of? ServiceError
+      blk.call(failure(e))
+    else
+      blk.call(internal_fail)
+    end
+  end
+
+  # Find which node the service instance is running on.
+  def find_node(instance_id)
+    svc = @prov_svcs[instance_id]
+    raise ServiceError.new(ServiceError::NOT_FOUND, "instance_id #{instance_id}") if svc.nil?
+    node_id = svc[:credentials]["node_id"]
+    raise "Cannot find node_id for #{instance_id}" if node_id.nil?
+    node_id
+  end
 
   # node_score(node) -> number.  this base class provisions on the
   # "best" node (lowest load, most free capacity, etc). this method
   # should return a number; higher scores represent "better" nodes;
   # negative/zero scores mean that a node should be ignored
-  abstract :node_score
+  def node_score(node)
+    node['available_capacity'] if node
+  end
+
+  # Service Provisioner subclasses must implement the following
+  # methods
 
   # service_name() --> string
   # (inhereted from VCAP::Services::Base::Base)
+  #
+
+  # various lifecycle jobs class
+  abstract :create_snapshot_job, :rollback_snapshot_job, :create_serialized_url_job, :import_from_url_job, :import_from_data_job
 
 end
