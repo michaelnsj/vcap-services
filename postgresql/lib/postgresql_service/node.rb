@@ -68,7 +68,7 @@ class VCAP::Services::Postgresql::Node
     EM.add_periodic_timer(KEEP_ALIVE_INTERVAL) {postgresql_keep_alive}
     EM.add_periodic_timer(LONG_QUERY_INTERVAL) {kill_long_queries}
     EM.add_periodic_timer(@max_long_tx/2) {kill_long_transaction}
-    EM.add_periodic_timer(STORAGE_QUOTA_INTERVAL) {enforce_storage_quota}
+    # EM.add_periodic_timer(STORAGE_QUOTA_INTERVAL) {enforce_storage_quota} // to don't need to care about the quota thing
 
     @base_dir = options[:base_dir]
     FileUtils.mkdir_p(@base_dir) if @base_dir
