@@ -152,7 +152,7 @@ class VCAP::Services::MongoDB::Node
     list = []
     ProvisionedService.all.each do |instance|
       begin
-        conn = Mongo::Connection.new(@local_ip, instance.port)
+        conn = Mongo::MongoClient.new(@local_ip, instance.port)
         conn.db('admin').authenticate(instance.admin, instance.adminpass)
         coll = conn.db(instance.db).collection('system.users')
         coll.find().each do |binding|
@@ -348,7 +348,7 @@ class VCAP::Services::MongoDB::Node
     database = provisioned_service.db
 
     # Drop original collections
-    conn = Mongo::Connection.new('127.0.0.1', port)
+    conn = Mongo::MongoClient.new('127.0.0.1', port)
     conn.db('admin').authenticate(username, password)
     db = conn.db(database)
     db.collection_names.each do |name|
@@ -523,7 +523,7 @@ class VCAP::Services::MongoDB::Node
   end
 
   def get_healthz(instance)
-    conn = Mongo::Connection.new(@local_ip, instance.port)
+    conn = Mongo::MongoClient.new(@local_ip, instance.port)
     auth = conn.db('admin').authenticate(instance.admin, instance.adminpass)
     auth ? "ok" : "fail"
   rescue => e
@@ -620,10 +620,10 @@ class VCAP::Services::MongoDB::Node
 
     t.times do
       begin
-        conn = Mongo::Connection.new('127.0.0.1', options[:port])
-        user = conn.db('admin').add_user(options[:username], options[:password])
+        conn = Mongo::MongoClient.new('127.0.0.1', options[:port])
+        user = conn.db('admin').add_user(options[:username], options[:password], false, :roles => ['root'])
         raise "user not added" if user.nil?
-        @logger.debug("user #{options[:username]} added in db #{options[:db]}")
+        @logger.debug("user #{options[:username]} added in db admin}")
         return true
       rescue => e
         @logger.error("Failed add user #{options[:username]}: #{e.message}")
@@ -638,10 +638,10 @@ class VCAP::Services::MongoDB::Node
 
   def mongodb_add_user(options)
     @logger.debug("add user in port: #{options[:port]}, db: #{options[:db]}")
-    conn = Mongo::Connection.new('127.0.0.1', options[:port])
+    conn = Mongo::MongoClient.new('127.0.0.1', options[:port])
     auth = conn.db('admin').authenticate(options[:admin], options[:adminpass])
     db = conn.db(options[:db])
-    db.add_user(options[:username], options[:password])
+    db.add_user(options[:username], options[:password], false, :roles => [{:role => 'dbOwner', :db => options[:db]}])
     @logger.debug("user #{options[:username]} added")
   ensure
     conn.close if conn
@@ -649,7 +649,7 @@ class VCAP::Services::MongoDB::Node
 
   def mongodb_remove_user(options)
     @logger.debug("remove user in port: #{options[:port]}, db: #{options[:db]}")
-    conn = Mongo::Connection.new('127.0.0.1', options[:port])
+    conn = Mongo::MongoClient.new('127.0.0.1', options[:port])
     auth = conn.db('admin').authenticate(options[:admin], options[:adminpass])
     db = conn.db(options[:db])
     db.remove_user(options[:username])
@@ -659,12 +659,12 @@ class VCAP::Services::MongoDB::Node
   end
 
   def mongodb_overall_stats(options)
-    conn = Mongo::Connection.new('127.0.0.1', options[:port])
+    conn = Mongo::MongoClient.new('127.0.0.1', options[:port])
     auth = conn.db('admin').authenticate(options[:admin], options[:adminpass])
     # The following command is not documented in mongo's official doc.
     # But it works like calling db.serverStatus from client. And 10gen support has
     # confirmed it's safe to call it in such way.
-    conn.db('admin').command({:serverStatus => 1})
+    conn.db(options[:db]).command({:serverStatus => 1})
   rescue => e
     @logger.warn("Failed mongodb_overall_stats: #{e.message}, options: #{options}")
     "Failed mongodb_overall_stats: #{e.message}, options: #{options}"
@@ -673,7 +673,7 @@ class VCAP::Services::MongoDB::Node
   end
 
   def mongodb_db_stats(options)
-    conn = Mongo::Connection.new('127.0.0.1', options[:port])
+    conn = Mongo::MongoClient.new('127.0.0.1', options[:port])
     auth = conn.db('admin').authenticate(options[:admin], options[:adminpass])
     conn.db(options[:db]).stats()
   rescue => e

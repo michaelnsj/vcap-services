@@ -1,11 +1,12 @@
 source :rubygems
 
-gem "eventmachine"
-gem "em-http-request"
-gem "nats", '>= 0.4.8'
+gem "eventmachine", '~> 0.12.10'
+gem "em-http-request", '~> 0.3.0'
+gem "escape_utils", '~> 0.2.3'
+gem "nats", '>= 0.4.8', '< 0.4.28'
 gem "ruby-hmac"
 gem "uuidtools"
-gem "datamapper", ">= 0.10.2"
+gem "datamapper", "~> 1.1.0"
 gem "do_sqlite3"
 gem "dm-sqlite-adapter"
 gem "sinatra"
@@ -13,12 +14,11 @@ gem "thin"
 gem "mongo"
 gem "bson_ext"
 
-gem 'vcap_common', :require => ['vcap/common', 'vcap/component']
-gem 'vcap_logging', :require => ['vcap/logging']
+gem 'vcap_common', '~> 0.99', :require => ['vcap/common', 'vcap/component']
+gem 'vcap_logging', '~> 0.1.0', :require => ['vcap/logging']
 
 group :test do
   gem "rake"
   gem "rspec"
-  gem "rcov"
   gem "ci_reporter"
 end
