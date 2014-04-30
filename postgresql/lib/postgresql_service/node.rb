@@ -159,7 +159,7 @@ class VCAP::Services::Postgresql::Node
     process_list = @connection.query("select * from pg_stat_activity")
     process_list.each do |proc|
       if (proc["query_start"] != nil and Time.now.to_i - Time::parse(proc["query_start"]).to_i >= @max_long_query) and (proc["current_query"] != "<IDLE>") and (proc["usename"] != @postgresql_config["user"]) then
-        @connection.query("select pg_terminate_backend(#{proc['procpid']})")
+        @connection.query("select pg_terminate_backend(#{proc['pid']})")
         @logger.info("Killed long query: user:#{proc['usename']} db:#{proc['datname']} time:#{Time.now.to_i - Time::parse(proc['query_start']).to_i} info:#{proc['current_query']}")
       end
     end
@@ -171,7 +171,7 @@ class VCAP::Services::Postgresql::Node
     process_list = @connection.query("select * from pg_stat_activity")
     process_list.each do |proc|
       if (proc["xact_start"] != nil and Time.now.to_i - Time::parse(proc["xact_start"]).to_i >= @max_long_tx) and (proc["usename"] != @postgresql_config["user"]) then
-        @connection.query("select pg_terminate_backend(#{proc['procpid']})")
+        @connection.query("select pg_terminate_backend(#{proc['pid']})")
         @logger.info("Killed long transaction: user:#{proc['usename']} db:#{proc['datname']} active_time:#{Time.now.to_i - Time::parse(proc['xact_start']).to_i}")
       end
     end
@@ -399,7 +399,7 @@ class VCAP::Services::Postgresql::Node
     begin
       @logger.info("Deleting database: #{name}")
       begin
-        @connection.query("select pg_terminate_backend(procpid) from pg_stat_activity where datname = '#{name}'")
+        @connection.query("select pg_terminate_backend(pid) from pg_stat_activity where datname = '#{name}'")
       rescue PGError => e
         @logger.warn("Could not kill database session: #{e}")
       end
@@ -418,7 +418,7 @@ class VCAP::Services::Postgresql::Node
     @logger.info("Delete user #{binduser.user}/#{binduser.sys_user}")
     db_connection = postgresql_connect(@postgresql_config["host"],@postgresql_config["user"],@postgresql_config["pass"],@postgresql_config["port"],db)
     begin
-      db_connection.query("select pg_terminate_backend(procpid) from pg_stat_activity where usename = '#{binduser.user}' or usename = '#{binduser.sys_user}'")
+      db_connection.query("select pg_terminate_backend(pid) from pg_stat_activity where usename = '#{binduser.user}' or usename = '#{binduser.sys_user}'")
     rescue PGError => e
       @logger.warn("Could not kill user session: #{e}")
     end

@@ -15,7 +15,7 @@ class VCAP::Services::Postgresql::Node
   end
 
   def kill_user_sessions(target_user, target_db)
-    @connection.query("select pg_terminate_backend(procpid) from pg_stat_activity where usename = '#{target_user}' and datname = '#{target_db}'")
+    @connection.query("select pg_terminate_backend(pid) from pg_stat_activity where usename = '#{target_user}' and datname = '#{target_db}'")
   end
 
   #Grant access without checking
