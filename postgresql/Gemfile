@@ -1,7 +1,7 @@
 source "http://rubygems.org"
 
 gem "nats", '>= 0.4.8'
-gem "datamapper", ">= 0.10.2"
+gem "datamapper", "~> 1.2.0"
 gem "do_sqlite3", :require => nil
 gem "dm-sqlite-adapter"
 gem "eventmachine"
@@ -19,7 +19,7 @@ gem 'vcap_logging', :require => ['vcap/logging']
 group :test do
   gem "rake"
   gem "rspec"
-  gem "rcov"
+  gem 'simplecov', '~> 0.8.2'
   gem "ci_reporter"
 end
 
