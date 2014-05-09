@@ -129,6 +129,7 @@ DEPENDENCIES
   em-http-request (~> 0.3.0)
   escape_utils (~> 0.2.3)
   eventmachine (~> 0.12.10)
+  logging
   mongo
   nats (>= 0.4.8, < 0.4.28)
   rake

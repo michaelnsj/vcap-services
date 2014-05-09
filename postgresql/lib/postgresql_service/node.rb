@@ -3,7 +3,7 @@ require "erb"
 require "fileutils"
 require "logger"
 require "pp"
-require "datamapper"
+require "data_mapper"
 require "uuidtools"
 require "pg"
 

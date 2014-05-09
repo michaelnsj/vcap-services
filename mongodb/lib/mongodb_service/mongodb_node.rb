@@ -7,7 +7,7 @@ require "set"
 require "mongo"
 require "timeout"
 
-require "datamapper"
+require "data_mapper"
 require "nats/client"
 require "uuidtools"
 

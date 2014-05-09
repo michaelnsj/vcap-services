@@ -1,7 +1,7 @@
 # Copyright (c) 2009-2011 VMware, Inc.
 require "pp"
 require "set"
-require "datamapper"
+require "data_mapper"
 require "uuidtools"
 
 $LOAD_PATH.unshift File.dirname(__FILE__)

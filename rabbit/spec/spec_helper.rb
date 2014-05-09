@@ -9,5 +9,5 @@ require 'rspec'
 require 'bundler/setup'
 require 'nats/client'
 require 'vcap/common'
-require "datamapper"
+require "data_mapper"
 require "amqp"

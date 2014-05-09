@@ -5,7 +5,7 @@ require "logger"
 require "pp"
 require "set"
 
-require "datamapper"
+require "data_mapper"
 require "nats/client"
 require "uuidtools"
 

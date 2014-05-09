@@ -4,7 +4,7 @@ require "rubygems"
 require "bundler/setup"
 require 'sinatra'
 require 'thin'
-require 'datamapper'
+require 'data_mapper'
 require 'logger'
 require 'yajl'
 

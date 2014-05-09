@@ -4,7 +4,7 @@ require "fileutils"
 require "logger"
 require "pp"
 
-require "datamapper"
+require "data_mapper"
 require "uuidtools"
 require "mysql"
 require "open3"

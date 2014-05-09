@@ -2,7 +2,7 @@
 $LOAD_PATH.unshift File.join(File.dirname(__FILE__), '..', '..', '..', 'base', 'lib')
 require 'base/asynchronous_service_gateway'
 require 'fiber'
-require 'datamapper'
+require 'data_mapper'
 require 'dm-types'
 require 'nats/client'
 require 'uuidtools'

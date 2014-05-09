@@ -13,6 +13,7 @@ gem "sinatra"
 gem "thin"
 gem "mongo"
 gem "bson_ext"
+gem "logging"
 
 gem 'vcap_common', '~> 0.99', :require => ['vcap/common', 'vcap/component']
 gem 'vcap_logging', '~> 0.1.0', :require => ['vcap/logging']
