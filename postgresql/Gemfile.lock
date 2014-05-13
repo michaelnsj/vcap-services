@@ -1,3 +1,14 @@
+PATH
+  remote: ../../common
+  specs:
+    vcap_common (1.0.3)
+      eventmachine (~> 0.12.11.cloudfoundry.3)
+      logging (>= 1.5.0)
+      nats (~> 0.4.26)
+      posix-spawn (~> 0.3.6)
+      thin (~> 1.4.1)
+      yajl-ruby (~> 0.8.3)
+
 GEM
   remote: http://rubygems.org/
   specs:
@@ -8,7 +19,6 @@ GEM
     builder (3.2.2)
     ci_reporter (1.9.2)
       builder (>= 2.1.2)
-    cookiejar (0.3.2)
     daemons (1.1.9)
     data_objects (0.10.14)
       addressable (~> 2.1)
@@ -60,28 +70,20 @@ GEM
     do_sqlite3 (0.10.14)
       data_objects (= 0.10.14)
     docile (1.1.3)
-    em-http-request (1.1.2)
-      addressable (>= 2.3.4)
-      cookiejar
-      em-socksify (>= 0.3)
-      eventmachine (>= 1.0.3)
-      http_parser.rb (>= 0.6.0)
-    em-socksify (0.3.0)
-      eventmachine (>= 1.0.0.beta.4)
-    eventmachine (1.0.3)
+    em-http-request (0.3.0)
+      addressable (>= 2.0.0)
+      escape_utils
+      eventmachine (>= 0.12.9)
+    escape_utils (1.0.1)
+    eventmachine (0.12.11.cloudfoundry.3)
     fastercsv (1.5.5)
-    http_parser.rb (0.6.0)
-    httpclient (2.3.4.1)
     json (1.8.1)
     json_pure (1.8.1)
     little-plugger (1.1.3)
     logging (1.8.2)
       little-plugger (>= 1.1.3)
       multi_json (>= 1.8.4)
-    membrane (0.0.5)
-    mime-types (2.2)
     multi_json (1.10.0)
-    multipart-post (2.0.0)
     nats (0.4.26)
       daemons (>= 1.1.5)
       eventmachine (>= 0.12.10)
@@ -112,28 +114,15 @@ GEM
       rack-protection (~> 1.4)
       tilt (~> 1.3, >= 1.3.4)
     stringex (1.5.1)
-    thin (1.6.2)
+    thin (1.4.1)
       daemons (>= 1.0.9)
-      eventmachine (>= 1.0.0)
+      eventmachine (>= 0.12.6)
       rack (>= 1.0.0)
     tilt (1.4.1)
     uuidtools (2.1.4)
-    vcap_common (2.0.11)
-      em-http-request (~> 1.0)
-      eventmachine
-      httpclient
-      membrane (~> 0.0.2)
-      mime-types
-      multipart-post
-      nats (~> 0.4.24)
-      posix-spawn (~> 0.3.6)
-      thin
-      vmstat (~> 2.0)
-      yajl-ruby
     vcap_logging (0.1.4)
       rake
-    vmstat (2.1.0)
-    yajl-ruby (1.2.0)
+    yajl-ruby (0.8.3)
 
 PLATFORMS
   ruby
@@ -156,5 +145,5 @@ DEPENDENCIES
   sinatra
   thin
   uuidtools
-  vcap_common
+  vcap_common!
   vcap_logging
