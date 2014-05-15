@@ -371,6 +371,16 @@ class VCAP::Services::Postgresql::Node
             db_connection.query("grant all on all tables in schema public to public")
             db_connection.query("grant all on all sequences in schema public to public")
             db_connection.query("grant all on all functions in schema public to public")
+
+            # also need to grant objects created by me in the future to public
+            db_connection.query("ALTER DEFAULT PRIVILEGES for role #{user} IN SCHEMA public GRANT all ON tables TO PUBLIC")
+            db_connection.query("ALTER DEFAULT PRIVILEGES for role #{sys_user} IN SCHEMA public GRANT all ON tables TO PUBLIC")
+            
+            db_connection.query("ALTER DEFAULT PRIVILEGES for role #{user} IN SCHEMA public GRANT all ON sequences TO PUBLIC")
+            db_connection.query("ALTER DEFAULT PRIVILEGES for role #{sys_user} IN SCHEMA public GRANT all ON sequences TO PUBLIC")
+            
+            db_connection.query("ALTER DEFAULT PRIVILEGES for role #{user} IN SCHEMA public GRANT all ON functions TO PUBLIC")
+            db_connection.query("ALTER DEFAULT PRIVILEGES for role #{sys_user} IN SCHEMA public GRANT all ON functions TO PUBLIC")
           else
             querys = db_connection.query("select 'grant all on '||tablename||' to public;' as query_to_do from pg_tables where schemaname = 'public'")
             querys.each do |query_to_do|
