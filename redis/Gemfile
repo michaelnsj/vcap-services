@@ -2,6 +2,7 @@ source :rubygems
 
 gem "eventmachine"
 gem "em-http-request"
+gem "escape_utils", '0.3.2'
 gem "nats", '>= 0.4.8'
 gem "ruby-hmac"
 gem "uuidtools"

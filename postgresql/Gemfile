@@ -6,6 +6,7 @@ gem "do_sqlite3"
 gem "dm-sqlite-adapter"
 gem "eventmachine"
 gem "em-http-request"
+gem "escape_utils", '0.3.2'
 gem "json"
 gem "pg"
 gem "uuidtools"
