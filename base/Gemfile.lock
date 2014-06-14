@@ -1,3 +1,14 @@
+PATH
+  remote: ../../common
+  specs:
+    vcap_common (1.0.3)
+      eventmachine (~> 0.12.11.cloudfoundry.3)
+      logging (>= 1.5.0)
+      nats (~> 0.4.26)
+      posix-spawn (~> 0.3.6)
+      thin (~> 1.4.1)
+      yajl-ruby (~> 0.8.3)
+
 GEM
   remote: http://rubygems.org/
   specs:
@@ -52,20 +63,21 @@ GEM
       escape_utils
       eventmachine (>= 0.12.9)
     escape_utils (0.2.3)
-    eventmachine (0.12.10)
+    eventmachine (0.12.11.cloudfoundry.3)
     eventmachine_httpserver (0.2.1)
     fastercsv (1.5.4)
     json (1.4.6)
-    json_pure (1.5.1)
+    json_pure (1.8.1)
     little-plugger (1.1.2)
     logging (1.5.0)
       little-plugger (>= 1.1.2)
-    nats (0.4.10)
-      daemons (>= 1.1.0)
+    nats (0.4.26)
+      daemons (>= 1.1.5)
       eventmachine (>= 0.12.10)
-      json_pure (>= 1.5.1)
-    posix-spawn (0.3.6)
-    rack (1.2.2)
+      json_pure (>= 1.7.3)
+      thin (>= 1.4.1)
+    posix-spawn (0.3.8)
+    rack (1.5.2)
     rake (0.8.7)
     rcov (0.9.9)
     rspec (2.5.0)
@@ -81,20 +93,13 @@ GEM
       rack (~> 1.1)
       tilt (>= 1.2.2, < 2.0)
     stringex (1.2.1)
-    thin (1.2.11)
+    thin (1.4.1)
       daemons (>= 1.0.9)
       eventmachine (>= 0.12.6)
       rack (>= 1.0.0)
     tilt (1.2.2)
     uuidtools (2.1.2)
-    vcap_common (0.99)
-      eventmachine (~> 0.12.10)
-      logging (>= 1.5.0)
-      nats
-      posix-spawn
-      thin
-      yajl-ruby
-    yajl-ruby (0.8.2)
+    yajl-ruby (0.8.3)
 
 PLATFORMS
   ruby
@@ -104,10 +109,11 @@ DEPENDENCIES
   datamapper (>= 0.10.2)
   do_sqlite3
   em-http-request
-  eventmachine
+  eventmachine (~> 0.12.11.cloudfoundry.3)
   eventmachine_httpserver
   json
-  nats (>= 0.4.8)
+  logging
+  nats (>= 0.4.26)
   rake
   rcov
   rspec
@@ -115,4 +121,4 @@ DEPENDENCIES
   sinatra
   thin
   uuidtools
-  vcap_common
+  vcap_common!
