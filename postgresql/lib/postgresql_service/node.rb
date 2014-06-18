@@ -130,10 +130,7 @@ class VCAP::Services::Postgresql::Node
   def postgresql_connect(host, user, password, port, database)
     5.times do
       begin
-        @logger.info("PostgreSQL connect: #{host}, #{port}, #{user}, #{password}, #{database}")
         connect = PGconn.connect(host, port, nil, nil, database, user, password)
-        version = get_postgres_version(connect)
-        @logger.info("PostgreSQL server version: #{version}")
         return connect
       rescue PGError => e
         @logger.error("PostgreSQL connection attempt failed: #{host} #{port} #{database} #{user} #{password}")
