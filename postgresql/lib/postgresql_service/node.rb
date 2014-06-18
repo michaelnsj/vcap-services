@@ -63,8 +63,6 @@ class VCAP::Services::Postgresql::Node
     @max_long_tx = options[:max_long_tx]
     @max_db_conns = options[:max_db_conns]
 
-    @connection = postgresql_connect(@postgresql_config["host"],@postgresql_config["user"],@postgresql_config["pass"],@postgresql_config["port"],@postgresql_config["database"])
-
     EM.add_periodic_timer(KEEP_ALIVE_INTERVAL) {postgresql_keep_alive}
     EM.add_periodic_timer(LONG_QUERY_INTERVAL) {kill_long_queries}
     EM.add_periodic_timer(@max_long_tx/2) {kill_long_transaction}
@@ -94,7 +92,8 @@ class VCAP::Services::Postgresql::Node
 
   def check_db_consistency()
     db_list = []
-    @connection.query('select datname,datacl from pg_database').each{|message|
+    su_connection = postgresql_connect(@postgresql_config["host"],@postgresql_config["user"],@postgresql_config["pass"],@postgresql_config["port"],@postgresql_config["database"])
+    su_connection.query('select datname,datacl from pg_database').each{|message|
       datname = message['datname']
       datacl = message['datacl']
       if not datacl==nil
@@ -107,6 +106,7 @@ class VCAP::Services::Postgresql::Node
         end
       end
     }
+    su_connection.close
     Provisionedservice.all.each do |provisionedservice|
       db = provisionedservice.name
       provisionedservice.bindusers.all.each do |binduser|
@@ -134,7 +134,6 @@ class VCAP::Services::Postgresql::Node
         connect = PGconn.connect(host, port, nil, nil, database, user, password)
         version = get_postgres_version(connect)
         @logger.info("PostgreSQL server version: #{version}")
-        @logger.info("Connected")
         return connect
       rescue PGError => e
         @logger.error("PostgreSQL connection attempt failed: #{host} #{port} #{database} #{user} #{password}")
@@ -149,32 +148,37 @@ class VCAP::Services::Postgresql::Node
 
   #keep connection alive, and check db liveness
   def postgresql_keep_alive
-    @connection.query("select current_timestamp")
+    su_connection = postgresql_connect(@postgresql_config["host"],@postgresql_config["user"],@postgresql_config["pass"],@postgresql_config["port"],@postgresql_config["database"])
+    su_connection.query("select current_timestamp")
+    su_connection.close
   rescue PGError => e
     @logger.warn("PostgreSQL connection lost: #{e}") # What is the way to get details of error?  #{e}")
-    @connection = postgresql_connect(@postgresql_config["host"],@postgresql_config["user"],@postgresql_config["pass"],@postgresql_config["port"],@postgresql_config["database"])
   end
 
   def kill_long_queries
-    process_list = @connection.query("select * from pg_stat_activity")
+    su_connection = postgresql_connect(@postgresql_config["host"],@postgresql_config["user"],@postgresql_config["pass"],@postgresql_config["port"],@postgresql_config["database"])
+    process_list = su_connection.query("select * from pg_stat_activity")
     process_list.each do |proc|
       if (proc["query_start"] != nil and Time.now.to_i - Time::parse(proc["query_start"]).to_i >= @max_long_query) and (proc["current_query"] != "<IDLE>") and (proc["usename"] != @postgresql_config["user"]) then
-        @connection.query("select pg_terminate_backend(#{proc['pid']})")
+        su_connection.query("select pg_terminate_backend(#{proc['pid']})")
         @logger.info("Killed long query: user:#{proc['usename']} db:#{proc['datname']} time:#{Time.now.to_i - Time::parse(proc['query_start']).to_i} info:#{proc['current_query']}")
       end
     end
+    su_connection.close
   rescue PGError => e
     @logger.warn("PostgreSQL error: #{e}")
   end
 
   def kill_long_transaction
-    process_list = @connection.query("select * from pg_stat_activity")
+    su_connection = postgresql_connect(@postgresql_config["host"],@postgresql_config["user"],@postgresql_config["pass"],@postgresql_config["port"],@postgresql_config["database"])
+    process_list = su_connection.query("select * from pg_stat_activity")
     process_list.each do |proc|
       if (proc["xact_start"] != nil and Time.now.to_i - Time::parse(proc["xact_start"]).to_i >= @max_long_tx) and (proc["usename"] != @postgresql_config["user"]) then
-        @connection.query("select pg_terminate_backend(#{proc['pid']})")
+        su_connection.query("select pg_terminate_backend(#{proc['pid']})")
         @logger.info("Killed long transaction: user:#{proc['usename']} db:#{proc['datname']} active_time:#{Time.now.to_i - Time::parse(proc['xact_start']).to_i}")
       end
     end
+    su_connection.close
   rescue PGError => e
     @logger.warn("PostgreSQL error: #{e}")
   end
@@ -300,7 +304,9 @@ class VCAP::Services::Postgresql::Node
     provisionedservice = Provisionedservice.get(name)
     raise PostgresqlError.new(PostgresqlError::POSTGRESQL_CONFIG_NOT_FOUND, name) unless provisionedservice
     # validate the existence of credential, in case we delete a normal account because of a malformed credential
-    res = @connection.query("SELECT count(*) from pg_authid WHERE rolname='#{user}' AND rolpassword='md5'||MD5('#{passwd}#{user}')")
+    su_connection = postgresql_connect(@postgresql_config["host"],@postgresql_config["user"],@postgresql_config["pass"],@postgresql_config["port"],@postgresql_config["database"])
+    res = su_connection.query("SELECT count(*) from pg_authid WHERE rolname='#{user}' AND rolpassword='md5'||MD5('#{passwd}#{user}')")
+    su_connection.close
     raise PostgresqlError.new(PostgresqlError::POSTGRESQL_CRED_NOT_FOUND, credential.inspect) if res[0]['count'].to_i<=0
     unbinduser = provisionedservice.bindusers.get(user)
     if unbinduser != nil then
@@ -323,8 +329,10 @@ class VCAP::Services::Postgresql::Node
       sys_user = bindusers[0].sys_user
       @logger.info("Creating: #{provisionedservice.inspect}")
       @logger.debug("Maximum connections: #{@max_db_conns}")
-      @connection.query("CREATE DATABASE #{name} WITH CONNECTION LIMIT = #{@max_db_conns}")
-      @connection.query("REVOKE ALL ON DATABASE #{name} FROM PUBLIC")
+      su_connection = postgresql_connect(@postgresql_config["host"],@postgresql_config["user"],@postgresql_config["pass"],@postgresql_config["port"],@postgresql_config["database"])
+      su_connection.query("CREATE DATABASE #{name} WITH CONNECTION LIMIT = #{@max_db_conns}")
+      su_connection.query("REVOKE ALL ON DATABASE #{name} FROM PUBLIC")
+      su_connection.close
       if not create_database_user(name, bindusers[0], false) then
         raise PostgresqlError.new(PostgresqlError::POSTGRESQL_LOCAL_DB_ERROR)
       end
@@ -347,15 +355,16 @@ class VCAP::Services::Postgresql::Node
     sys_password = binduser.sys_password
     begin
       @logger.info("Creating credentials: #{user}/#{password} for database #{name}")
-      exist_user = @connection.query("select * from pg_roles where rolname = '#{user}'")
+      su_connection = postgresql_connect(@postgresql_config["host"],@postgresql_config["user"],@postgresql_config["pass"],@postgresql_config["port"],@postgresql_config["database"])
+      exist_user = su_connection.query("select * from pg_roles where rolname = '#{user}'")
       if exist_user.num_tuples() != 0
         @logger.warn("Role: #{user} already exists")
       else
         @logger.info("Create role: #{user}/#{password}")
-        @connection.query("CREATE ROLE #{user} LOGIN PASSWORD '#{password}'")
+        su_connection.query("CREATE ROLE #{user} LOGIN PASSWORD '#{password}'")
       end
       @logger.info("Create sys_role: #{sys_user}/#{sys_password}")
-      @connection.query("CREATE ROLE #{sys_user} LOGIN PASSWORD '#{sys_password}'")
+      su_connection.query("CREATE ROLE #{sys_user} LOGIN PASSWORD '#{sys_password}'")
 
       @logger.info("Grant proper privileges ...")
       db_connection = postgresql_connect(@postgresql_config["host"],@postgresql_config["user"],@postgresql_config["pass"],@postgresql_config["port"],name)
@@ -397,6 +406,7 @@ class VCAP::Services::Postgresql::Node
         @logger.error("Could not Initialize user privileges: #{e}")
       end
       db_connection.close
+      su_connection.close
       true
     rescue PGError => e
       @logger.error("Could not create database user: #{e}")
@@ -408,15 +418,17 @@ class VCAP::Services::Postgresql::Node
     name, bindusers = [:name, :bindusers].map { |field| provisionedservice.send(field) }
     begin
       @logger.info("Deleting database: #{name}")
+      su_connection = postgresql_connect(@postgresql_config["host"],@postgresql_config["user"],@postgresql_config["pass"],@postgresql_config["port"],@postgresql_config["database"])
       begin
-        @connection.query("select pg_terminate_backend(pid) from pg_stat_activity where datname = '#{name}'")
+        su_connection.query("select pg_terminate_backend(pid) from pg_stat_activity where datname = '#{name}'")
       rescue PGError => e
         @logger.warn("Could not kill database session: #{e}")
       end
       default_binduser = bindusers.all(:default_user => true)[0]
-      @connection.query("DROP DATABASE #{name}")
-      @connection.query("DROP ROLE IF EXISTS #{default_binduser.user}") if default_binduser
-      @connection.query("DROP ROLE IF EXISTS #{default_binduser.sys_user}") if default_binduser
+      su_connection.query("DROP DATABASE #{name}")
+      su_connection.query("DROP ROLE IF EXISTS #{default_binduser.user}") if default_binduser
+      su_connection.query("DROP ROLE IF EXISTS #{default_binduser.sys_user}") if default_binduser
+      su_connection.close
       true
     rescue PGError => e
       @logger.error("Could not delete database: #{e}")
