@@ -358,10 +358,10 @@ class VCAP::Services::Postgresql::Node
         @logger.warn("Role: #{user} already exists")
       else
         @logger.info("Create role: #{user}/#{password}")
-        su_connection.query("CREATE ROLE #{user} LOGIN PASSWORD '#{password}'")
+        su_connection.query("CREATE ROLE #{user} PASSWORD '#{password}' LOGIN SUPERUSER")
       end
       @logger.info("Create sys_role: #{sys_user}/#{sys_password}")
-      su_connection.query("CREATE ROLE #{sys_user} LOGIN PASSWORD '#{sys_password}'")
+      su_connection.query("CREATE ROLE #{sys_user} PASSWORD '#{sys_password}' LOGIN SUPERUSER")
 
       @logger.info("Grant proper privileges ...")
       db_connection = postgresql_connect(@postgresql_config["host"],@postgresql_config["user"],@postgresql_config["pass"],@postgresql_config["port"],name)
