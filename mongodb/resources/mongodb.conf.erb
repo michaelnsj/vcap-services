@@ -1,22 +1,15 @@
-dbpath = <%= data_dir %>
-logpath = <%= log_file %>
-logappend = false  # This doesn't works
-
-bind_ip = 0.0.0.0
-port = <%= port %>
-
-auth = true
-
-nohttpinterface = true
-
-# mms-token = <%= password %>
-
-# journaling is currently preallocating 4G of space on disk
-# we can't do that.
-#
-#journal    = true
-noprealloc = false
-
-# smallfiles = start first container file at 16MB, doubling 4 times.
-# so this = 240MB per user. (i.e. 16MB container + 32MB + 64MB + 128MB)
-smallfiles = true
+systemLog:
+  destination: file
+  path: <%= log_file %>
+  quiet: true
+  logAppend: false
+storage:
+  dbPath: <%= data_dir %>
+  smallFiles: true
+  journal:
+    enabled: true
+security:
+  authorization: enabled
+net:
+  bindIp: 0.0.0.0
+  port: <%= port %>
