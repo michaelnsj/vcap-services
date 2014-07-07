@@ -154,11 +154,11 @@ class VCAP::Services::Postgresql::Node
 
   def kill_long_queries
     su_connection = postgresql_connect(@postgresql_config["host"],@postgresql_config["user"],@postgresql_config["pass"],@postgresql_config["port"],@postgresql_config["database"])
-    process_list = su_connection.query("select * from pg_stat_activity")
+    process_list = su_connection.query("select * from pg_stat_activity where upper(state) != 'IDLE' and upper(state) != 'IDLE IN TRANSACTION'")
     process_list.each do |proc|
-      if (proc["query_start"] != nil and Time.now.to_i - Time::parse(proc["query_start"]).to_i >= @max_long_query) and (proc["current_query"] != "<IDLE>") and (proc["usename"] != @postgresql_config["user"]) then
+      if (proc["query_start"] != nil and Time.now.to_i - Time::parse(proc["query_start"]).to_i >= @max_long_query) and (proc["usename"] != @postgresql_config["user"]) then
         su_connection.query("select pg_terminate_backend(#{proc['pid']})")
-        @logger.info("Killed long query: user:#{proc['usename']} db:#{proc['datname']} time:#{Time.now.to_i - Time::parse(proc['query_start']).to_i} info:#{proc['current_query']}")
+        @logger.info("Killed long query: user:#{proc['usename']} db:#{proc['datname']} time:#{Time.now.to_i - Time::parse(proc['query_start']).to_i} info:#{proc['query']}")
       end
     end
     su_connection.close
