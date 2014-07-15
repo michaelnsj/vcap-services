@@ -6,4 +6,7 @@ class VCAP::Services::ElasticSearch::Provisioner < VCAP::Services::Base::Provisi
 
   include VCAP::Services::ElasticSearch::Common
 
+  def node_score(node)
+    node['max_memory']
+  end
 end
