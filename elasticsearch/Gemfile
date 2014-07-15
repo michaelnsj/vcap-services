@@ -1,0 +1,24 @@
+source 'https://rubygems.org'
+
+gem "eventmachine", '~> 0.12.11.cloudfoundry.3'
+gem "em-http-request", '~> 0.3.0'
+gem "escape_utils", '~> 0.2.3'
+gem "nats", '>= 0.4.8', '< 0.4.28'
+gem "ruby-hmac"
+gem "uuidtools"
+gem "datamapper", "~> 1.2.0"
+gem "do_sqlite3"
+gem "dm-sqlite-adapter"
+gem "sinatra"
+gem "thin"
+gem "rest-client"
+gem "logging"
+
+gem 'vcap_common', path: '../../common', :require => ['vcap/common', 'vcap/component']
+gem 'vcap_logging', '~> 0.1.0', :require => ['vcap/logging']
+
+group :test do
+  gem "rake"
+  gem "rspec"
+  gem "ci_reporter"
+end
