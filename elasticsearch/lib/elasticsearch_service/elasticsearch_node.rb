@@ -270,11 +270,13 @@ class VCAP::Services::ElasticSearch::Node
   def start_instance(provisioned_service)
     @logger.debug("Starting: #{provisioned_service.pretty_inspect}")
 
-    config_file = setup_server(provisioned_service.name, {})
+    configs = setup_server(provisioned_service.name, {})
+    provisioned_service.http_port = configs['http.port']
+    provisioned_service.tcp_port = configs['transport.tcp.port']
 
     pid_file = pid_file(provisioned_service.name)
 
-    `export ES_HEAP_SIZE="#{@max_memory}m" && #{@elasticsearch_path} -p #{pid_file} -Des.config=#{config_file}`     
+    `export ES_HEAP_SIZE="#{@max_memory}m" && #{@elasticsearch_path} -p #{pid_file} -Des.config=#{configs['config.file']} -d`     
     status = $?
     @logger.send(status.success? ? :debug : :error, "Start up finished, status = #{status}")
 
@@ -436,20 +438,22 @@ class VCAP::Services::ElasticSearch::Node
     FileUtils.mkdir_p(final_conf['path.data'])
     FileUtils.mkdir_p(final_conf['path.logs'])
 
-    gen_es_config(final_conf['path.conf'], final_conf)
+    config_file = gen_es_config(final_conf['path.conf'], final_conf)
+    final_conf['config.file'] = config_file
+    final_conf
   end
   
   def start_master_instance
     pid_file = pid_file('master')
     return if is_process_running?(pid_file)
 
-    config_file = setup_server('master', {
+    configs = setup_server('master', {
       'path.data' => @master_data_dir,
       'node.master' => true,
       'node.data' => true
     })
 
-    `export ES_HEAP_SIZE="#{@max_memory}m" && #{@elasticsearch_path} -p #{pid_file} -Des.config=#{config_file}`
+    `export ES_HEAP_SIZE="#{@max_memory}m" && #{@elasticsearch_path} -p #{pid_file} -Des.config=#{configs['config.file']} -d`
     status = $?
     @logger.send(status.success? ? :debug : :error, "Start up finished, status = #{status}")
 
