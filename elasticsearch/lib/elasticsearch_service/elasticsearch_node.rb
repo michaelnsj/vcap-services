@@ -133,9 +133,8 @@ class VCAP::Services::ElasticSearch::Node
   end
 
   def announcement
-    @capacity_lock.synchronize do
-      {:available_capacity => @capacity}
-    end
+    @logger.warn("[announcement] is invokded...........")
+    {:available_capacity => @capacity}
   end
 
   def all_instances_list
@@ -427,7 +426,6 @@ class VCAP::Services::ElasticSearch::Node
     FileUtils.mkdir_p(final_conf['path.conf'])
     FileUtils.mkdir_p(final_conf['path.data'])
     FileUtils.mkdir_p(final_conf['path.logs'])
-    FileUtils.mkdir_p(final_conf['node.name'])
 
     gen_es_config(conf_dir, final_conf)
   end
