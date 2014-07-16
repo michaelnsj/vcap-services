@@ -446,7 +446,7 @@ class VCAP::Services::ElasticSearch::Node
 
     pid = `[ -f #{pid_file} ] && cat #{pid_file}`
     status = $?
-    @logger.send(status.success? ? :debug : :error, "Service #{provisioned_service.name} running with pid #{pid}")
+    @logger.send(status.success? ? :debug : :error, "Service master running with pid #{pid}")
 
     return pid.to_i
   end
