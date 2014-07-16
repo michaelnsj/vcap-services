@@ -287,6 +287,7 @@ class VCAP::Services::ElasticSearch::Node
 
   def elasticsearch_health_stats(instance)
     url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.http_port}/_cluster/health"
+    @logger.debug("check elasticsearch_health_stats with url #{url}")
     response = nil
     Timeout::timeout(ES_TIMEOUT) do
       response = RestClient.get(url)
@@ -300,6 +301,7 @@ class VCAP::Services::ElasticSearch::Node
 
   def elasticsearch_index_stats(instance)
     url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.http_port}/_nodes/#{instance.name}/stats"
+    @logger.debug("check elasticsearch_index_stats with url #{url}")
     response = nil
     Timeout::timeout(ES_TIMEOUT) do
       response = RestClient.get(url)
@@ -313,6 +315,7 @@ class VCAP::Services::ElasticSearch::Node
 
   def elasticsearch_process_stats(instance)
     url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.http_port}/_nodes/#{instance.name}/process"
+    @logger.debug("check elasticsearch_process_stats with url #{url}")
     response = nil
     Timeout::timeout(ES_TIMEOUT) do
       response = RestClient.get(url)
@@ -419,7 +422,7 @@ class VCAP::Services::ElasticSearch::Node
       'path.logs' => logs_dir,
       'http.port' => ports[:http],
       'transport.tcp.port' => ports[:tcp],
-      'node.name' => instance_id + "_node"
+      'node.name' => instance_id
     }
     final_conf = default_conf.merge(other_conf).merge(instance_config)
     
@@ -427,7 +430,7 @@ class VCAP::Services::ElasticSearch::Node
     FileUtils.mkdir_p(final_conf['path.data'])
     FileUtils.mkdir_p(final_conf['path.logs'])
 
-    gen_es_config(conf_dir, final_conf)
+    gen_es_config(final_conf['path.conf'], final_conf)
   end
   
   def start_master_instance
