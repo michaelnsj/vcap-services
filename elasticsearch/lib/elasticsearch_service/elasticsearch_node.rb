@@ -345,6 +345,7 @@ class VCAP::Services::ElasticSearch::Node
       "username" => provisioned_service.username,
       "password" => provisioned_service.password,
       "name"     => provisioned_service.name,
+      "cluster_name" => @cluster_name
     }
     credentials["url"] = "http://#{credentials['username']}:#{credentials['password']}@#{credentials['host']}:#{credentials['http_port']}"
     credentials
