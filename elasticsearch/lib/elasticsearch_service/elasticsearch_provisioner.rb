@@ -7,6 +7,7 @@ class VCAP::Services::ElasticSearch::Provisioner < VCAP::Services::Base::Provisi
   include VCAP::Services::ElasticSearch::Common
 
   def node_score(node)
+    @logger.info("ElasticSearch.Provisioner node_score node is ... #{node.inspect}")
     node['max_memory'] || 2048
   end
 end

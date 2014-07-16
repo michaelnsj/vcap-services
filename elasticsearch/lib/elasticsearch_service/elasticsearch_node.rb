@@ -36,7 +36,8 @@ class VCAP::Services::ElasticSearch::Node
   class ProvisionedService
     include DataMapper::Resource
     property :name,       String,       :key => true
-    property :port,       Integer,      :unique => true
+    property :http_port,  Integer,      :unique => true
+    property :tcp_port,  Integer,      :unique => true
     property :password,   String,       :required => true
     property :plan,       Enum[:free],  :required => true
     property :pid,        Integer
@@ -44,7 +45,7 @@ class VCAP::Services::ElasticSearch::Node
 
     def listening?
       begin
-        TCPSocket.open('localhost', port).close
+        TCPSocket.open('localhost', http_port).close
         return true
       rescue => e
         return false
@@ -69,7 +70,6 @@ class VCAP::Services::ElasticSearch::Node
     @pid_file = options[:pid]
     @cluster_name = options[:cluster_name]
     @max_memory = options[:max_memory]
-    @jvm_opts =  options[:jvm_opts]
     @capacity = options[:capacity]
     @logs_dir = options[:logs_dir]
     @master_data_dir = options[:master_data_dir]
@@ -80,11 +80,12 @@ class VCAP::Services::ElasticSearch::Node
     DataMapper.setup(:default, options[:local_db])
     DataMapper::auto_upgrade!
 
-    @free_ports = Set.new
-    options[:port_range].each {|port| @free_ports << port}
+    @free_tcp_ports = Set.new
+    @free_http_ports = Set.new
+    options[:tcp_port_range].each {|port| @free_tcp_ports << port}
+    options[:http_port_range].each {|port| @free_http_ports << port}
     @capacity_lock = Mutex.new
     @mutex = Mutex.new
-    @capacity_unit = 0
 
     start_master_instance
   end
@@ -92,10 +93,9 @@ class VCAP::Services::ElasticSearch::Node
   def pre_send_announcement
     @capacity_lock.synchronize do
       ProvisionedService.all.each do |provisioned_service|
-        @capacity -= @capacity_unit
-        delete_port(provisioned_service.port)
+        delete_ports({:tcp => provisioned_service.tcp_port, :http => provisioned_service.http_port})
         if provisioned_service.listening?
-          @logger.info("Service #{provisioned_service.name} already listening on port #{provisioned_service.port}")
+          @logger.info("Service #{provisioned_service.name} already listening on http port #{provisioned_service.http_port} transport port #{provisioned_service.tcp_port}")
           next
         end
         begin
@@ -105,6 +105,7 @@ class VCAP::Services::ElasticSearch::Node
             provisioned_service.kill
             raise "Couldn't save pid (#{pid})"
           end
+          @capacity -= 1
         rescue => e
           @logger.error("Error starting service #{provisioned_service.name}: #{e}")
         end
@@ -119,7 +120,7 @@ class VCAP::Services::ElasticSearch::Node
       @logger.info("Shutting down #{service}")
       stop_service(service)
     end
-    
+
     stop_master_node
   end
   
@@ -128,13 +129,12 @@ class VCAP::Services::ElasticSearch::Node
     return unless is_process_running?(pid_file)
 
     pid = File.read(pid_file)
-    Process.kill(9, pid)
+    Process.kill(9, pid.to_i)
   end
 
   def announcement
     @capacity_lock.synchronize do
-      { :available_capacity => @capacity,
-        :capacity_unit => @capacity_unit }
+      {:available_capacity => @capacity}
     end
   end
 
@@ -146,14 +146,15 @@ class VCAP::Services::ElasticSearch::Node
     list = []
     ProvisionedService.all.each do |ps|
       begin
-        url = "http://#{ps.username}:#{ps.password}@#{@local_ip}:#{ps.port}/_nodes/#{ps.name}"
+        url = "http://#{ps.username}:#{ps.password}@#{@local_ip}:#{ps.http_port}/_nodes/#{ps.name}"
         response = ''
         Timeout::timeout(ES_TIMEOUT) do
           response = RestClient.get(url)
         end
         credential = {
           'name' => ps.name,
-          'port' => ps.port,
+          'port' => ps.tcp_port,
+          'http_port' => ps.http_port,
           'username' => ps.username
         }
         list << credential if response =~ /"#{ps.name}"/
@@ -199,7 +200,6 @@ class VCAP::Services::ElasticSearch::Node
     {
       :running_services     => stats,
       :disk                 => du_hash,
-      :max_capacity         => @max_capacity,
       :available_capacity   => @capacity,
       :instances            => provisioned_instances
     }
@@ -217,7 +217,10 @@ class VCAP::Services::ElasticSearch::Node
       provisioned_service.password = UUIDTools::UUID.random_create.to_s
     end
 
-    provisioned_service.port = fetch_port
+    ports = fetch_ports
+    provisioned_service.http_port = ports[:http]
+    provisioned_service.tcp_port = ports[:tcp]
+
     provisioned_service.plan = plan
     provisioned_service.pid = start_instance(provisioned_service)
 
@@ -268,9 +271,7 @@ class VCAP::Services::ElasticSearch::Node
   def start_instance(provisioned_service)
     @logger.debug("Starting: #{provisioned_service.pretty_inspect}")
 
-    config_file = setup_server(provisioned_service.name, {
-      'http.port' => provisioned_service.port
-    })
+    config_file = setup_server(provisioned_service.name, {})
 
     pid_file = pid_file(provisioned_service.name)
 
@@ -282,7 +283,6 @@ class VCAP::Services::ElasticSearch::Node
     status = $?
     @logger.send(status.success? ? :debug : :error, "Service #{provisioned_service.name} running with pid #{pid}")
 
-    @capacity_unit = @capacity_unit + 1
     return pid.to_i
   end
 
@@ -340,12 +340,13 @@ class VCAP::Services::ElasticSearch::Node
     credentials = {
       "hostname" => @local_ip,
       "host"     => @local_ip,
-      "port"     => provisioned_service.port,
+      "port"     => provisioned_service.tcp_port,
+      "http_port"=> provisioned_service.http_port,
       "username" => provisioned_service.username,
       "password" => provisioned_service.password,
       "name"     => provisioned_service.name,
     }
-    credentials["url"] = "http://#{credentials['username']}:#{credentials['password']}@#{credentials['host']}:#{credentials['port']}"
+    credentials["url"] = "http://#{credentials['username']}:#{credentials['password']}@#{credentials['host']}:#{credentials['http_port']}"
     credentials
   end
 
@@ -359,8 +360,9 @@ class VCAP::Services::ElasticSearch::Node
     EM.defer do
       FileUtils.rm_rf(service_dir(provisioned_service.name))
       FileUtils.rm_rf(log_dir(provisioned_service.name))
+      FileUtils.rm_rf(pid_file(provisioned_service.name))
     end
-    return_port(provisioned_service.port)
+    return_ports({:tcp => provisioned_service.tcp_port, :http => provisioned_service.http_port})
 
     true
   rescue => e
@@ -369,31 +371,35 @@ class VCAP::Services::ElasticSearch::Node
 
   def stop_service(service)
     begin
-      @logger.info("Stopping #{service.name} PORT #{service.port} PID #{service.pid}")
+      @logger.info("Stopping #{service.name} HTTP PORT #{service.http_port} TCP PORT #{service.tcp_port} PID #{service.pid}")
       service.kill(:SIGTERM) if service.running?
     rescue => e
-      @logger.error("Error stopping service #{service.name} PORT #{service.port} PID #{service.pid}: #{e}")
+      @logger.error("Error stopping service #{service.name} HTTP PORT #{service.http_port} TCP PORT #{service.tcp_port} PID #{service.pid}: #{e}")
     end
   end
 
-  def fetch_port(port=nil)
+  def fetch_ports()
     @mutex.synchronize do
-      port ||= @free_ports.first
-      raise "port #{port} is already taken!" unless @free_ports.include?(port)
-      @free_ports.delete(port)
-      port
+      tcp_port = @free_tcp_ports.first
+      @free_tcp_ports.delete(tcp_port)
+      
+      http_port = @free_http_ports.first
+      @free_http_ports.delete(http_port)
+      {:tcp => tcp_port, :http => http_port}
     end
   end
 
-  def return_port(port)
+  def return_ports(ports)
     @mutex.synchronize do
-      @free_ports << port
+      @free_tcp_ports << ports[:tcp]
+      @free_http_ports << ports[:http]
     end
   end
 
-  def delete_port(port)
+  def delete_ports(ports)
     @mutex.synchronize do
-      @free_ports.delete(port)
+      @free_tcp_ports.delete(ports[:tcp])
+      @free_http_ports.delete(ports[:http])
     end
   end
 
@@ -402,22 +408,26 @@ class VCAP::Services::ElasticSearch::Node
     data_dir = data_dir(instance_id)
     work_dir = work_dir(instance_id)
     logs_dir = log_dir(instance_id)
-    
-    FileUtils.mkdir_p(conf_dir)
-    FileUtils.mkdir_p(data_dir)
-    FileUtils.mkdir_p(work_dir)
-    FileUtils.mkdir_p(logs_dir)
 
     default_conf = @options[:elasticsearch]
 
-    # node.name, path.data, path.conf, path.logs are specified to the instance
+    ports = fetch_ports()
+    # node.name, path.data, path.conf, path.logs and ports are specified to the instance
     other_conf = {
       'path.conf' => conf_dir,
       'path.data' => data_dir,
       'path.logs' => logs_dir,
+      'http.port' => ports[:http],
+      'transport.tcp.port' => ports[:tcp],
       'node.name' => instance_id + "_node"
     }
     final_conf = default_conf.merge(other_conf).merge(instance_config)
+    
+    FileUtils.mkdir_p(final_conf['path.conf'])
+    FileUtils.mkdir_p(final_conf['path.data'])
+    FileUtils.mkdir_p(final_conf['path.logs'])
+    FileUtils.mkdir_p(final_conf['node.name'])
+
     gen_es_config(conf_dir, final_conf)
   end
   
