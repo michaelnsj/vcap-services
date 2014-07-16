@@ -376,6 +376,12 @@ class VCAP::Services::ElasticSearch::Node
     begin
       @logger.info("Stopping #{service.name} HTTP PORT #{service.http_port} TCP PORT #{service.tcp_port} PID #{service.pid}")
       service.kill(:SIGTERM) if service.running?
+      
+      EM.defer do
+        FileUtils.rm_rf(service_dir(service.name))
+        FileUtils.rm_rf(log_dir(service.name))
+        FileUtils.rm_rf(pid_file(service.name))
+      end
     rescue => e
       @logger.error("Error stopping service #{service.name} HTTP PORT #{service.http_port} TCP PORT #{service.tcp_port} PID #{service.pid}: #{e}")
     end
