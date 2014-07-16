@@ -287,7 +287,7 @@ class VCAP::Services::ElasticSearch::Node
   end
 
   def elasticsearch_health_stats(instance)
-    url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.port}/_cluster/health"
+    url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.http_port}/_cluster/health"
     response = nil
     Timeout::timeout(ES_TIMEOUT) do
       response = RestClient.get(url)
@@ -300,7 +300,7 @@ class VCAP::Services::ElasticSearch::Node
   end
 
   def elasticsearch_index_stats(instance)
-    url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.port}/_nodes/#{instance.name}/stats"
+    url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.http_port}/_nodes/#{instance.name}/stats"
     response = nil
     Timeout::timeout(ES_TIMEOUT) do
       response = RestClient.get(url)
@@ -313,7 +313,7 @@ class VCAP::Services::ElasticSearch::Node
   end
 
   def elasticsearch_process_stats(instance)
-    url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.port}/_nodes/#{instance.name}/process"
+    url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.http_port}/_nodes/#{instance.name}/process"
     response = nil
     Timeout::timeout(ES_TIMEOUT) do
       response = RestClient.get(url)
@@ -326,7 +326,7 @@ class VCAP::Services::ElasticSearch::Node
   end
 
   def elasticsearch_status(instance)
-    url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.port}/_nodes/#{instance.name}"
+    url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.http_port}/_nodes/#{instance.name}"
     Timeout::timeout(ES_TIMEOUT) do
       RestClient.get(url)
     end
