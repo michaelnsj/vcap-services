@@ -364,7 +364,7 @@ class VCAP::Services::ServiceBroker::AsynchronousServiceGateway < VCAP::Services
 
       req = create_http_request(
         :head => @cc_req_hdrs,
-        :body => Yajl::Encoder.encode(offering),
+        :body => Yajl::Encoder.encode(offering)
       )
 
       f = Fiber.current
