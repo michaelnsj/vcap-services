@@ -115,7 +115,6 @@ class VCAP::Services::ElasticSearch::Node
 
   def shutdown
     super
-    @logger.info("Shutting down instances..")
     ProvisionedService.all.each do |service|
       @logger.info("Shutting down #{service}")
       stop_service(service)
@@ -133,7 +132,6 @@ class VCAP::Services::ElasticSearch::Node
   end
 
   def announcement
-    @logger.warn("[announcement] is invokded...........")
     {:available_capacity => @capacity}
   end
 
@@ -268,8 +266,6 @@ class VCAP::Services::ElasticSearch::Node
   end
 
   def start_instance(provisioned_service)
-    @logger.debug("Starting: #{provisioned_service.pretty_inspect}")
-
     configs = setup_server(provisioned_service.name, {})
     provisioned_service.http_port = configs['http.port']
     provisioned_service.tcp_port = configs['transport.tcp.port']
@@ -289,7 +285,6 @@ class VCAP::Services::ElasticSearch::Node
 
   def elasticsearch_health_stats(instance)
     url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.http_port}/_cluster/health"
-    @logger.debug("check elasticsearch_health_stats with url #{url}")
     response = nil
     Timeout::timeout(ES_TIMEOUT) do
       response = RestClient.get(url)
@@ -303,7 +298,6 @@ class VCAP::Services::ElasticSearch::Node
 
   def elasticsearch_index_stats(instance)
     url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.http_port}/_nodes/#{instance.name}/stats"
-    @logger.debug("check elasticsearch_index_stats with url #{url}")
     response = nil
     Timeout::timeout(ES_TIMEOUT) do
       response = RestClient.get(url)
@@ -317,7 +311,6 @@ class VCAP::Services::ElasticSearch::Node
 
   def elasticsearch_process_stats(instance)
     url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.http_port}/_nodes/#{instance.name}/process"
-    @logger.debug("check elasticsearch_process_stats with url #{url}")
     response = nil
     Timeout::timeout(ES_TIMEOUT) do
       response = RestClient.get(url)

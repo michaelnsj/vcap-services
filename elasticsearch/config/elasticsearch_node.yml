@@ -1,4 +1,3 @@
-<%= @logger.info("local variables is .... #{local_variables}") %>
 ---
 capacity: 200
 plan: "free"
