@@ -30,14 +30,15 @@ class VCAP::Services::ElasticSearch::Node
 
   include VCAP::Services::ElasticSearch::Common
 
-  # Default value is 2 seconds
-  ES_TIMEOUT = 2
+  # timeout for es request like index status, process status etc.
+  ES_TIMEOUT = 30
 
   class ProvisionedService
     include DataMapper::Resource
     property :name,       String,       :key => true
-    property :http_port,  Integer,      :unique => true
-    property :tcp_port,  Integer,      :unique => true
+    property :cluster_name, String,     :required => true
+    property :http_port,  Integer,      :required => true
+    property :tcp_port,  Integer,       :required => true
     property :password,   String,       :required => true
     property :plan,       Enum[:free],  :required => true
     property :pid,        Integer
@@ -68,7 +69,6 @@ class VCAP::Services::ElasticSearch::Node
     FileUtils.mkdir_p(@base_dir)
     @elasticsearch_path = get_es_path(options[:exec_path])
     @pid_file = options[:pid]
-    @cluster_name = options[:cluster_name]
     @max_memory = options[:max_memory]
     @capacity = options[:capacity]
     @logs_dir = options[:logs_dir]
@@ -99,11 +99,10 @@ class VCAP::Services::ElasticSearch::Node
           next
         end
         begin
-          pid = start_instance(provisioned_service)
-          provisioned_service.pid = pid
+          start_instance(provisioned_service)
           unless provisioned_service.save
             provisioned_service.kill
-            raise "Couldn't save pid (#{pid})"
+            raise "Couldn't save pid (#{provisioned_service.pid})"
           end
           @capacity -= 1
         rescue => e
@@ -132,7 +131,9 @@ class VCAP::Services::ElasticSearch::Node
   end
 
   def announcement
-    {:available_capacity => @capacity}
+    @capacity_lock.synchronize do
+      {:available_capacity => @capacity}
+    end
   end
 
   def all_instances_list
@@ -203,6 +204,7 @@ class VCAP::Services::ElasticSearch::Node
   end
 
   def provision(plan, credentials = nil, version=nil)
+    raise "Exceed the max capacity: #{@capacity}" if (@capacity <= 0)
     provisioned_service = ProvisionedService.new
     if credentials
       provisioned_service.name = credentials["name"]
@@ -214,10 +216,6 @@ class VCAP::Services::ElasticSearch::Node
       provisioned_service.password = UUIDTools::UUID.random_create.to_s
     end
 
-    ports = fetch_ports
-    provisioned_service.http_port = ports[:http]
-    provisioned_service.tcp_port = ports[:tcp]
-
     provisioned_service.plan = plan
     provisioned_service.pid = start_instance(provisioned_service)
 
@@ -225,7 +223,7 @@ class VCAP::Services::ElasticSearch::Node
       cleanup_service(provisioned_service)
       raise "Could not save entry: #{provisioned_service.errors.pretty_inspect}"
     end
-
+    @capacity -= 1
     response = get_credentials(provisioned_service)
     @logger.debug("response: #{response}")
     return response
@@ -267,8 +265,11 @@ class VCAP::Services::ElasticSearch::Node
 
   def start_instance(provisioned_service)
     configs = setup_server(provisioned_service.name, {})
+
+    # info per instance from configuration
     provisioned_service.http_port = configs['http.port']
     provisioned_service.tcp_port = configs['transport.tcp.port']
+    provisioned_service.cluster_name = configs['cluster.name']
 
     pid_file = pid_file(provisioned_service.name)
 
@@ -280,7 +281,10 @@ class VCAP::Services::ElasticSearch::Node
     status = $?
     @logger.send(status.success? ? :debug : :error, "Service #{provisioned_service.name} running with pid #{pid}")
 
-    return pid.to_i
+    # info per instance from runtime
+    provisioned_service.pid = pid.to_i
+
+    return provisioned_service.pid
   end
 
   def elasticsearch_health_stats(instance)
@@ -342,7 +346,7 @@ class VCAP::Services::ElasticSearch::Node
       "username" => provisioned_service.username,
       "password" => provisioned_service.password,
       "name"     => provisioned_service.name,
-      "cluster_name" => @cluster_name
+      "cluster_name" => provisioned_service.cluster_name
     }
     credentials["url"] = "http://#{credentials['username']}:#{credentials['password']}@#{credentials['host']}:#{credentials['http_port']}"
     credentials
@@ -353,7 +357,6 @@ class VCAP::Services::ElasticSearch::Node
 
     stop_service(provisioned_service)
     raise "Could not cleanup service: #{provisioned_service.errors.pretty_inspect}" unless provisioned_service.new? || provisioned_service.destroy
-    provisioned_service.kill if provisioned_service.running?
 
     EM.defer do
       FileUtils.rm_rf(service_dir(provisioned_service.name))
@@ -371,12 +374,6 @@ class VCAP::Services::ElasticSearch::Node
     begin
       @logger.info("Stopping #{service.name} HTTP PORT #{service.http_port} TCP PORT #{service.tcp_port} PID #{service.pid}")
       service.kill(:SIGTERM) if service.running?
-      
-      EM.defer do
-        FileUtils.rm_rf(service_dir(service.name))
-        FileUtils.rm_rf(log_dir(service.name))
-        FileUtils.rm_rf(pid_file(service.name))
-      end
     rescue => e
       @logger.error("Error stopping service #{service.name} HTTP PORT #{service.http_port} TCP PORT #{service.tcp_port} PID #{service.pid}: #{e}")
     end
@@ -413,8 +410,6 @@ class VCAP::Services::ElasticSearch::Node
     work_dir = work_dir(instance_id)
     logs_dir = log_dir(instance_id)
 
-    default_conf = @options[:elasticsearch]
-
     ports = fetch_ports()
     # node.name, path.data, path.conf, path.logs and ports are specified to the instance
     other_conf = {
@@ -425,7 +420,9 @@ class VCAP::Services::ElasticSearch::Node
       'transport.tcp.port' => ports[:tcp],
       'node.name' => instance_id
     }
-    final_conf = default_conf.merge(other_conf).merge(instance_config)
+
+    es_default_conf = @options[:elasticsearch]
+    final_conf = es_default_conf.merge(other_conf).merge(instance_config)
     
     FileUtils.mkdir_p(final_conf['path.conf'])
     FileUtils.mkdir_p(final_conf['path.data'])

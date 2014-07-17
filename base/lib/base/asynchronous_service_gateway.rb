@@ -151,6 +151,7 @@ class VCAP::Services::AsynchronousServiceGateway < Sinatra::Base
     end
 
     @provisioner.provision_service(req) do |msg|
+      @logger.error("['/gateway/v1/configurations']..... message is .... #{msg}")
       if msg['success']
         async_reply(VCAP::Services::Api::GatewayProvisionResponse.new(msg['response']).encode)
       else
