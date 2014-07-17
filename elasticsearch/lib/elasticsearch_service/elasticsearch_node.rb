@@ -357,7 +357,6 @@ class VCAP::Services::ElasticSearch::Node
 
     stop_service(provisioned_service)
     raise "Could not cleanup service: #{provisioned_service.errors.pretty_inspect}" unless provisioned_service.new? || provisioned_service.destroy
-    provisioned_service.kill if provisioned_service.running?
 
     EM.defer do
       FileUtils.rm_rf(service_dir(provisioned_service.name))
