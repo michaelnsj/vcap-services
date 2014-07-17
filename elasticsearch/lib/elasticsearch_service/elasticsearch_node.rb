@@ -36,8 +36,9 @@ class VCAP::Services::ElasticSearch::Node
   class ProvisionedService
     include DataMapper::Resource
     property :name,       String,       :key => true
+    property :cluster_name, String
     property :http_port,  Integer,      :unique => true
-    property :tcp_port,  Integer,      :unique => true
+    property :tcp_port,  Integer,       :unique => true
     property :password,   String,       :required => true
     property :plan,       Enum[:free],  :required => true
     property :pid,        Integer
@@ -68,7 +69,6 @@ class VCAP::Services::ElasticSearch::Node
     FileUtils.mkdir_p(@base_dir)
     @elasticsearch_path = get_es_path(options[:exec_path])
     @pid_file = options[:pid]
-    @cluster_name = options[:cluster_name]
     @max_memory = options[:max_memory]
     @capacity = options[:capacity]
     @logs_dir = options[:logs_dir]
@@ -269,6 +269,7 @@ class VCAP::Services::ElasticSearch::Node
     configs = setup_server(provisioned_service.name, {})
     provisioned_service.http_port = configs['http.port']
     provisioned_service.tcp_port = configs['transport.tcp.port']
+    provisioned_service.cluster_name = configs['cluster.name']
 
     pid_file = pid_file(provisioned_service.name)
 
@@ -342,7 +343,7 @@ class VCAP::Services::ElasticSearch::Node
       "username" => provisioned_service.username,
       "password" => provisioned_service.password,
       "name"     => provisioned_service.name,
-      "cluster_name" => @cluster_name
+      "cluster_name" => provisioned_service.cluster_name
     }
     credentials["url"] = "http://#{credentials['username']}:#{credentials['password']}@#{credentials['host']}:#{credentials['http_port']}"
     credentials
@@ -371,12 +372,6 @@ class VCAP::Services::ElasticSearch::Node
     begin
       @logger.info("Stopping #{service.name} HTTP PORT #{service.http_port} TCP PORT #{service.tcp_port} PID #{service.pid}")
       service.kill(:SIGTERM) if service.running?
-      
-      EM.defer do
-        FileUtils.rm_rf(service_dir(service.name))
-        FileUtils.rm_rf(log_dir(service.name))
-        FileUtils.rm_rf(pid_file(service.name))
-      end
     rescue => e
       @logger.error("Error stopping service #{service.name} HTTP PORT #{service.http_port} TCP PORT #{service.tcp_port} PID #{service.pid}: #{e}")
     end
@@ -413,8 +408,6 @@ class VCAP::Services::ElasticSearch::Node
     work_dir = work_dir(instance_id)
     logs_dir = log_dir(instance_id)
 
-    default_conf = @options[:elasticsearch]
-
     ports = fetch_ports()
     # node.name, path.data, path.conf, path.logs and ports are specified to the instance
     other_conf = {
@@ -425,7 +418,9 @@ class VCAP::Services::ElasticSearch::Node
       'transport.tcp.port' => ports[:tcp],
       'node.name' => instance_id
     }
-    final_conf = default_conf.merge(other_conf).merge(instance_config)
+
+    es_default_conf = @options[:elasticsearch]
+    final_conf = es_default_conf.merge(other_conf).merge(instance_config)
     
     FileUtils.mkdir_p(final_conf['path.conf'])
     FileUtils.mkdir_p(final_conf['path.data'])
