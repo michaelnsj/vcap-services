@@ -36,9 +36,9 @@ class VCAP::Services::ElasticSearch::Node
   class ProvisionedService
     include DataMapper::Resource
     property :name,       String,       :key => true
-    property :cluster_name, String
-    property :http_port,  Integer,      :unique => true
-    property :tcp_port,  Integer,       :unique => true
+    property :cluster_name, String,     :required => true
+    property :http_port,  Integer,      :required => true
+    property :tcp_port,  Integer,       :required => true
     property :password,   String,       :required => true
     property :plan,       Enum[:free],  :required => true
     property :pid,        Integer
@@ -99,11 +99,10 @@ class VCAP::Services::ElasticSearch::Node
           next
         end
         begin
-          pid = start_instance(provisioned_service)
-          provisioned_service.pid = pid
+          start_instance(provisioned_service)
           unless provisioned_service.save
             provisioned_service.kill
-            raise "Couldn't save pid (#{pid})"
+            raise "Couldn't save pid (#{provisioned_service.pid})"
           end
           @capacity -= 1
         rescue => e
@@ -132,7 +131,9 @@ class VCAP::Services::ElasticSearch::Node
   end
 
   def announcement
-    {:available_capacity => @capacity}
+    @capacity_lock.synchronize do
+      {:available_capacity => @capacity}
+    end
   end
 
   def all_instances_list
@@ -203,6 +204,7 @@ class VCAP::Services::ElasticSearch::Node
   end
 
   def provision(plan, credentials = nil, version=nil)
+    raise "Exceed the max capacity: #{@capacity}" if (@capacity <= 0)
     provisioned_service = ProvisionedService.new
     if credentials
       provisioned_service.name = credentials["name"]
@@ -213,10 +215,6 @@ class VCAP::Services::ElasticSearch::Node
       provisioned_service.username = UUIDTools::UUID.random_create.to_s
       provisioned_service.password = UUIDTools::UUID.random_create.to_s
     end
-
-    ports = fetch_ports
-    provisioned_service.http_port = ports[:http]
-    provisioned_service.tcp_port = ports[:tcp]
 
     provisioned_service.plan = plan
     provisioned_service.pid = start_instance(provisioned_service)
@@ -267,6 +265,8 @@ class VCAP::Services::ElasticSearch::Node
 
   def start_instance(provisioned_service)
     configs = setup_server(provisioned_service.name, {})
+
+    # info per instance from configuration
     provisioned_service.http_port = configs['http.port']
     provisioned_service.tcp_port = configs['transport.tcp.port']
     provisioned_service.cluster_name = configs['cluster.name']
@@ -281,7 +281,10 @@ class VCAP::Services::ElasticSearch::Node
     status = $?
     @logger.send(status.success? ? :debug : :error, "Service #{provisioned_service.name} running with pid #{pid}")
 
-    return pid.to_i
+    # info per instance from runtime
+    provisioned_service.pid = pid.to_i
+
+    return provisioned_service.pid
   end
 
   def elasticsearch_health_stats(instance)
