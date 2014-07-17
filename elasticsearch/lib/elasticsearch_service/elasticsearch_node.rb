@@ -30,8 +30,8 @@ class VCAP::Services::ElasticSearch::Node
 
   include VCAP::Services::ElasticSearch::Common
 
-  # Default value is 10 seconds
-  ES_TIMEOUT = 10
+  # timeout for es request like index status, process status etc.
+  ES_TIMEOUT = 30
 
   class ProvisionedService
     include DataMapper::Resource
