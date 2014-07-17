@@ -225,7 +225,7 @@ class VCAP::Services::ElasticSearch::Node
       cleanup_service(provisioned_service)
       raise "Could not save entry: #{provisioned_service.errors.pretty_inspect}"
     end
-
+    @capacity -= 1
     response = get_credentials(provisioned_service)
     @logger.debug("response: #{response}")
     return response
