@@ -30,8 +30,8 @@ class VCAP::Services::ElasticSearch::Node
 
   include VCAP::Services::ElasticSearch::Common
 
-  # Default value is 2 seconds
-  ES_TIMEOUT = 2
+  # Default value is 30 seconds
+  ES_TIMEOUT = 30
 
   class ProvisionedService
     include DataMapper::Resource
