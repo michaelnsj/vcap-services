@@ -5,6 +5,7 @@ require "logger"
 require "pp"
 require "set"
 require "mongo"
+require "socket"
 require "timeout"
 
 require "data_mapper"
@@ -195,13 +196,15 @@ class VCAP::Services::MongoDB::Node
     provisioned_service.adminpass = UUIDTools::UUID.random_create.to_s
     provisioned_service.db        = db
 
+    # wait for mongod to start
+    while !is_port_open?('127.0.0.1', port)
+      sleep 1
+    end
+
     raise "Cannot save provision_service" unless provisioned_service.save
 
     username = credential && credential['username'] ? credential['username'] : UUIDTools::UUID.random_create.to_s
     password = credential && credential['password'] ? credential['password'] : UUIDTools::UUID.random_create.to_s
-
-    # wait for mongod to start
-    sleep 0.5
 
     # Add super_user in admin table for backend operations
     mongodb_add_admin({
@@ -728,5 +731,23 @@ class VCAP::Services::MongoDB::Node
   ensure
     @logger.warn(" *** END mongodb log - instance: #{service_id}")
     @logger.warn("")
+  end
+
+
+  def is_port_open?(ip, port)
+    begin
+      Timeout::timeout(1) do
+        begin
+          s = TCPSocket.new(ip, port)
+          s.close
+          return true
+        rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH
+          return false
+        end
+      end
+    rescue Timeout::Error
+    end
+
+    return false
   end
 end
