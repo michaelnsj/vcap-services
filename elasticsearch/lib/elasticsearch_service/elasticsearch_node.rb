@@ -221,8 +221,10 @@ class VCAP::Services::ElasticSearch::Node
     end
 
     provisioned_service.plan = plan
-    provisioned_service.pid = start_instance(provisioned_service)
-
+    pid = start_instance(provisioned_service)
+    return if pid.nil?
+    
+    provisioned_service.pid = pid
     unless provisioned_service.pid && provisioned_service.save
       cleanup_service(provisioned_service)
       raise "Could not save entry: #{provisioned_service.errors.pretty_inspect}"
@@ -271,25 +273,32 @@ class VCAP::Services::ElasticSearch::Node
   end
 
   def start_instance(provisioned_service)
+    if provisioned_service.new? && (provisioned_service.http_port.nil? || provisioned_service.tcp_port.nil? || provisioned_service.cluster_name.nil?)
+      @logger.warn("Either tcp port or http port is empty, skip the service #{provisioned_service.name}.")
+      return
+    end
+    
     configs = setup_server(provisioned_service.name, {
       'http.port' => provisioned_service.http_port,
       'transport.tcp.port' => provisioned_service.tcp_port
     })
 
     # info per instance from configuration
-    provisioned_service.http_port = configs['http.port']
-    provisioned_service.tcp_port = configs['transport.tcp.port']
-    provisioned_service.cluster_name = configs['cluster.name']
+    if (provisioned_service.new?)
+      provisioned_service.http_port = configs['http.port']
+      provisioned_service.tcp_port = configs['transport.tcp.port']
+      provisioned_service.cluster_name = configs['cluster.name']
+    end
 
     pid_file = pid_file(provisioned_service.name)
 
     `export ES_HEAP_SIZE="#{@max_memory}m" && #{@elasticsearch_path} -p #{pid_file} -Des.config=#{configs['config.file']} -d`     
     status = $?
-    @logger.send(status.success? ? :debug : :error, "Start up finished, status = #{status}")
+    @logger.info("Service start up finished, status = #{status}")
 
     pid = `[ -f #{pid_file} ] && cat #{pid_file}`
     status = $?
-    @logger.send(status.success? ? :debug : :error, "Service #{provisioned_service.name} running with pid #{pid}")
+    @logger.info("Service #{provisioned_service.name} running with pid #{pid}, status = #{status}")
 
     # info per instance from runtime
     provisioned_service.pid = pid.to_i
@@ -414,7 +423,7 @@ class VCAP::Services::ElasticSearch::Node
     end
   end
 
-  def setup_server(instance_id, instance_config)    
+  def setup_server(instance_id, instance_config)
     conf_dir = config_dir(instance_id)
     data_dir = data_dir(instance_id)
     work_dir = work_dir(instance_id)
@@ -443,6 +452,7 @@ class VCAP::Services::ElasticSearch::Node
 
     config_file = gen_es_config(final_conf['path.conf'], final_conf)
     final_conf['config.file'] = config_file
+
     final_conf
   end
   
