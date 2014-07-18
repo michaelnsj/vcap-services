@@ -103,7 +103,7 @@ class VCAP::Services::ElasticSearch::Node
           next
         end
         begin
-          start_instance(provisioned_service)
+          start_instance(provisioned_service, false)
           unless provisioned_service.save
             provisioned_service.kill
             raise "Couldn't save pid (#{provisioned_service.pid})"
@@ -221,10 +221,9 @@ class VCAP::Services::ElasticSearch::Node
     end
 
     provisioned_service.plan = plan
-    pid = start_instance(provisioned_service)
+    pid = start_instance(provisioned_service, true)
     return if pid.nil?
     
-    provisioned_service.pid = pid
     unless provisioned_service.pid && provisioned_service.save
       cleanup_service(provisioned_service)
       raise "Could not save entry: #{provisioned_service.errors.pretty_inspect}"
@@ -272,22 +271,23 @@ class VCAP::Services::ElasticSearch::Node
     true
   end
 
-  def start_instance(provisioned_service)
-    if provisioned_service.new? && (provisioned_service.http_port.nil? || provisioned_service.tcp_port.nil? || provisioned_service.cluster_name.nil?)
+  def start_instance(provisioned_service, new_service)
+    if !new_service && (provisioned_service.http_port.nil? || provisioned_service.tcp_port.nil? || provisioned_service.cluster_name.nil?)
       @logger.warn("Either tcp port or http port is empty, skip the service #{provisioned_service.name}.")
       return
     end
     
-    configs = setup_server(provisioned_service.name, {
-      'http.port' => provisioned_service.http_port,
-      'transport.tcp.port' => provisioned_service.tcp_port
-    })
-
-    # info per instance from configuration
-    if (provisioned_service.new?)
+    if (new_service)
+      configs = setup_server(provisioned_service.name, {})
+      
       provisioned_service.http_port = configs['http.port']
       provisioned_service.tcp_port = configs['transport.tcp.port']
       provisioned_service.cluster_name = configs['cluster.name']
+    else
+      configs = setup_server(provisioned_service.name, {
+        'http.port' => provisioned_service.http_port,
+        'transport.tcp.port' => provisioned_service.tcp_port
+      })      
     end
 
     pid_file = pid_file(provisioned_service.name)
@@ -302,7 +302,6 @@ class VCAP::Services::ElasticSearch::Node
 
     # info per instance from runtime
     provisioned_service.pid = pid.to_i
-
     return provisioned_service.pid
   end
 
@@ -432,6 +431,7 @@ class VCAP::Services::ElasticSearch::Node
     ports = if instance_config['http.port'].nil? || instance_config['transport.tcp.port'].nil?
       fetch_ports()
     end
+    
     # node.name, path.data, path.conf, path.logs and ports are specified to the instance
     other_conf = {
       'path.conf' => conf_dir,
@@ -442,7 +442,7 @@ class VCAP::Services::ElasticSearch::Node
       'transport.tcp.port' => instance_config['transport.tcp.port'] || ports[:tcp],
       'node.name' => instance_id
     }
-
+    
     es_default_conf = @options[:elasticsearch]
     final_conf = es_default_conf.merge(other_conf).merge(instance_config)
     
