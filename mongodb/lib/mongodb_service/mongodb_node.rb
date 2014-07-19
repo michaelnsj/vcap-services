@@ -91,6 +91,7 @@ class VCAP::Services::MongoDB::Node
     @total_memory = options[:available_memory]
     @available_memory = options[:available_memory]
     @max_memory = options[:max_memory]
+    @host_name = options[:db_hostname]
 
     @config_template = ERB.new(File.read(options[:config_template]))
 
@@ -153,7 +154,7 @@ class VCAP::Services::MongoDB::Node
     list = []
     ProvisionedService.all.each do |instance|
       begin
-        conn = Mongo::MongoClient.new(@local_ip, instance.port)
+        conn = Mongo::MongoClient.new(@host_name, instance.port)
         conn.db('admin').authenticate(instance.admin, instance.adminpass)
         coll = conn.db(instance.db).collection('system.users')
         coll.find().each do |binding|
@@ -238,8 +239,8 @@ class VCAP::Services::MongoDB::Node
 
 
     response = {
-      "hostname" => @local_ip,
-      "host" => @local_ip,
+      "hostname" => @host_name,
+      "host" => @host_name,
       "port" => provisioned_service.port,
       "name" => provisioned_service.name,
       "db" => provisioned_service.db,
@@ -305,8 +306,8 @@ class VCAP::Services::MongoDB::Node
     })
 
     response = {
-      "hostname" => @local_ip,
-      "host" => @local_ip,
+      "hostname" => @host_name,
+      "host" => @host_name,
       "port"     => provisioned_service.port,
       "username" => username,
       "password" => password,
@@ -454,14 +455,14 @@ class VCAP::Services::MongoDB::Node
 
     # Update credentials for the new credential
     service_credential['port'] = port
-    service_credential['host'] = @local_ip
-    service_credential['hostname'] = @local_ip
+    service_credential['host'] = @host_name
+    service_credential['hostname'] = @host_name
 
     binding_credentials.each_value do |value|
       v = value["credentials"]
       v['port'] = port
-      v['host'] = @local_ip
-      v['hostname'] = @local_ip
+      v['host'] = @host_name
+      v['hostname'] = @host_name
     end
 
     [service_credential, binding_credentials]
@@ -526,7 +527,7 @@ class VCAP::Services::MongoDB::Node
   end
 
   def get_healthz(instance)
-    conn = Mongo::MongoClient.new(@local_ip, instance.port)
+    conn = Mongo::MongoClient.new(@host_name, instance.port)
     auth = conn.db('admin').authenticate(instance.admin, instance.adminpass)
     auth ? "ok" : "fail"
   rescue => e

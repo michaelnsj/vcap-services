@@ -62,6 +62,7 @@ class VCAP::Services::Postgresql::Node
     @max_long_query = options[:max_long_query]
     @max_long_tx = options[:max_long_tx]
     @max_db_conns = options[:max_db_conns]
+    @host_name = options[:db_hostname]
 
     EM.add_periodic_timer(KEEP_ALIVE_INTERVAL) {postgresql_keep_alive}
     EM.add_periodic_timer(LONG_QUERY_INTERVAL) {kill_long_queries}
@@ -489,8 +490,8 @@ class VCAP::Services::Postgresql::Node
   def gen_credential(name, user, passwd)
     response = {
       "name" => name,
-      "host" => @local_ip,
-      "hostname" => @local_ip,
+      "host" => @host_name,
+      "hostname" => @host_name,
       "port" => @postgresql_config['port'],
       "user" => user,
       "username" => user,
