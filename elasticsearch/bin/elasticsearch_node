@@ -30,7 +30,8 @@ class VCAP::Services::ElasticSearch::NodeBin < VCAP::Services::Base::NodeBin
 	options[:pid] = parse_property(config, "pid", String)
 	options[:exec_path] = parse_property(config, "exec_path", String)
 	options[:logs_dir] = parse_property(config, "logs_dir", String)
-	options[:master_data_dir] = parse_property(config, "master_data_dir", String)	
+	options[:master_data_dir] = parse_property(config, "master_data_dir", String)
+	options[:db_hostname] = parse_property(config, "db_hostname", String)	
 	options[:tcp_port_range] = parse_property(config, "tcp_port_range", Range)
 	options[:http_port_range] = parse_property(config, "http_port_range", Range)
 

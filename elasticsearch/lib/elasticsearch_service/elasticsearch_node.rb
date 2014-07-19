@@ -73,6 +73,7 @@ class VCAP::Services::ElasticSearch::Node
     @capacity = options[:capacity]
     @logs_dir = options[:logs_dir]
     @master_data_dir = options[:master_data_dir]
+    @host_name = options[:db_hostname]
 
     @config_template = ERB.new(File.read(options[:es_conf_template]))
     @logging_template = ERB.new(File.read(options[:logging_conf_template]))
@@ -147,7 +148,7 @@ class VCAP::Services::ElasticSearch::Node
     ProvisionedService.all.each do |ps|
       if managed_services.include?(ps.name)
         begin
-          url = "http://#{ps.username}:#{ps.password}@#{@local_ip}:#{ps.http_port}/_nodes/#{ps.name}"
+          url = "http://#{ps.username}:#{ps.password}@#{@host_name}:#{ps.http_port}/_nodes/#{ps.name}"
           response = ''
           Timeout::timeout(ES_TIMEOUT) do
             response = RestClient.get(url)
@@ -306,7 +307,7 @@ class VCAP::Services::ElasticSearch::Node
   end
 
   def elasticsearch_health_stats(instance)
-    url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.http_port}/_cluster/health"
+    url = "http://#{instance.username}:#{instance.password}@#{@host_name}:#{instance.http_port}/_cluster/health"
     response = nil
     Timeout::timeout(ES_TIMEOUT) do
       response = RestClient.get(url)
@@ -319,7 +320,7 @@ class VCAP::Services::ElasticSearch::Node
   end
 
   def elasticsearch_index_stats(instance)
-    url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.http_port}/_nodes/#{instance.name}/stats"
+    url = "http://#{instance.username}:#{instance.password}@#{@host_name}:#{instance.http_port}/_nodes/#{instance.name}/stats"
     response = nil
     Timeout::timeout(ES_TIMEOUT) do
       response = RestClient.get(url)
@@ -332,7 +333,7 @@ class VCAP::Services::ElasticSearch::Node
   end
 
   def elasticsearch_process_stats(instance)
-    url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.http_port}/_nodes/#{instance.name}/process"
+    url = "http://#{instance.username}:#{instance.password}@#{@host_name}:#{instance.http_port}/_nodes/#{instance.name}/process"
     response = nil
     Timeout::timeout(ES_TIMEOUT) do
       response = RestClient.get(url)
@@ -345,7 +346,7 @@ class VCAP::Services::ElasticSearch::Node
   end
 
   def elasticsearch_status(instance)
-    url = "http://#{instance.username}:#{instance.password}@#{@local_ip}:#{instance.http_port}/_nodes/#{instance.name}"
+    url = "http://#{instance.username}:#{instance.password}@#{@host_name}:#{instance.http_port}/_nodes/#{instance.name}"
     Timeout::timeout(ES_TIMEOUT) do
       RestClient.get(url)
     end
@@ -357,8 +358,8 @@ class VCAP::Services::ElasticSearch::Node
   def get_credentials(provisioned_service)
     raise "Could not access provisioned service" unless provisioned_service
     credentials = {
-      "hostname" => @local_ip,
-      "host"     => @local_ip,
+      "hostname" => @host_name,
+      "host"     => @host_name,
       "port"     => provisioned_service.tcp_port,
       "http_port"=> provisioned_service.http_port,
       "username" => provisioned_service.username,
