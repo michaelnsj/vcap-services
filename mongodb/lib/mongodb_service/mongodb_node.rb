@@ -198,7 +198,7 @@ class VCAP::Services::MongoDB::Node
     provisioned_service.db        = db
 
     # wait for mongod to start
-    while !is_port_open?(@host_name, port)
+    while !is_port_open?('127.0.0.1', port)
       sleep 1
     end
 
@@ -352,7 +352,7 @@ class VCAP::Services::MongoDB::Node
     database = provisioned_service.db
 
     # Drop original collections
-    conn = Mongo::MongoClient.new(@host_name, port)
+    conn = Mongo::MongoClient.new('127.0.0.1', port)
     conn.db('admin').authenticate(username, password)
     db = conn.db(database)
     db.collection_names.each do |name|
@@ -624,7 +624,7 @@ class VCAP::Services::MongoDB::Node
 
     t.times do
       begin
-        conn = Mongo::MongoClient.new(@host_name, options[:port])
+        conn = Mongo::MongoClient.new('127.0.0.1', options[:port])
         user = conn.db('admin').add_user(options[:username], options[:password], false, :roles => ['root'])
         raise "user not added" if user.nil?
         @logger.debug("user #{options[:username]} added in db admin}")
@@ -642,7 +642,7 @@ class VCAP::Services::MongoDB::Node
 
   def mongodb_add_user(options)
     @logger.debug("add user in port: #{options[:port]}, db: #{options[:db]}")
-    conn = Mongo::MongoClient.new(@host_name, options[:port])
+    conn = Mongo::MongoClient.new('127.0.0.1', options[:port])
     auth = conn.db('admin').authenticate(options[:admin], options[:adminpass])
     db = conn.db(options[:db])
     db.add_user(options[:username], options[:password], false, :roles => [{:role => 'dbOwner', :db => options[:db]}])
@@ -653,7 +653,7 @@ class VCAP::Services::MongoDB::Node
 
   def mongodb_remove_user(options)
     @logger.debug("remove user in port: #{options[:port]}, db: #{options[:db]}")
-    conn = Mongo::MongoClient.new(@host_name, options[:port])
+    conn = Mongo::MongoClient.new('127.0.0.1', options[:port])
     auth = conn.db('admin').authenticate(options[:admin], options[:adminpass])
     db = conn.db(options[:db])
     db.remove_user(options[:username])
@@ -663,7 +663,7 @@ class VCAP::Services::MongoDB::Node
   end
 
   def mongodb_overall_stats(options)
-    conn = Mongo::MongoClient.new(@host_name, options[:port])
+    conn = Mongo::MongoClient.new('127.0.0.1', options[:port])
     auth = conn.db('admin').authenticate(options[:admin], options[:adminpass])
     # The following command is not documented in mongo's official doc.
     # But it works like calling db.serverStatus from client. And 10gen support has
@@ -677,7 +677,7 @@ class VCAP::Services::MongoDB::Node
   end
 
   def mongodb_db_stats(options)
-    conn = Mongo::MongoClient.new(@host_name, options[:port])
+    conn = Mongo::MongoClient.new('127.0.0.1', options[:port])
     auth = conn.db('admin').authenticate(options[:admin], options[:adminpass])
     conn.db(options[:db]).stats()
   rescue => e
