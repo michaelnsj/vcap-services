@@ -93,6 +93,13 @@ class VCAP::Services::ElasticSearch::Node
     # always use the first free port for master instance
     master_ports = fetch_ports
     start_master_instance(master_ports)
+    
+    %w(INT TERM).each{|signal|
+      Signal.trap(signal) {
+        @logger.warn("shutdown with signal #{signal}")
+        shutdown
+      }
+    }
   end
 
   def pre_send_announcement
