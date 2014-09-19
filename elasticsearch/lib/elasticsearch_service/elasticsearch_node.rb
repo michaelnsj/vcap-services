@@ -332,7 +332,10 @@ class VCAP::Services::ElasticSearch::Node
     Timeout::timeout(ES_TIMEOUT) do
       response = RestClient.get(url)
     end
-    JSON.parse(response)['nodes'].flatten[1]['indices']
+    nodes = JSON.parse(response)['nodes']
+    
+    return nodes.flatten[1]['indices'] if nodes && !nodes.empty?
+    return 'no nodes avaiable.'
   rescue => e
     warning = "Failed elasticsearch_index_stats: #{e.message}, instance: #{instance.name}"
     @logger.warn(warning)
@@ -345,7 +348,11 @@ class VCAP::Services::ElasticSearch::Node
     Timeout::timeout(ES_TIMEOUT) do
       response = RestClient.get(url)
     end
-    JSON.parse(response)['nodes'].flatten[1]['process']
+
+    nodes = JSON.parse(response)['nodes']
+
+    return nodes.flatten[1]['process'] if nodes && !nodes.empty?
+    return 'no nodes avaiable.'
   rescue => e
     warning = "Failed elasticsearch_process_stats: #{e.message}, instance: #{instance.name}"
     @logger.warn(warning)
