@@ -42,7 +42,7 @@ appender:
       conversionPattern: "[%d{ISO8601}][%-5p][%-25c] %m%n"
 
   index_search_slow_log_file:
-	type: rollingFile
+    type: rollingFile
     maxBackupIndex: ${logging.file.max_backup_index}
     maxFileSize: ${logging.file.max_file_size}
     file: ${path.logs}/${cluster.name}_index_search_slowlog.log
@@ -52,7 +52,7 @@ appender:
       conversionPattern: "[%d{ISO8601}][%-5p][%-25c] %m%n"
 
   index_indexing_slow_log_file:
-	type: rollingFile
+    type: rollingFile
     maxBackupIndex: ${logging.file.max_backup_index}
     maxFileSize: ${logging.file.max_file_size}
     file: ${path.logs}/${cluster.name}_index_indexing_slowlog.log
