@@ -36,7 +36,6 @@ appender:
     maxBackupIndex: ${logging.file.max_backup_index}
     maxFileSize: ${logging.file.max_file_size}
     file: ${path.logs}/${cluster.name}.log
-    maxBackupIndex: 10
     layout:
       type: pattern
       conversionPattern: "[%d{ISO8601}][%-5p][%-25c] %m%n"
@@ -46,7 +45,6 @@ appender:
     maxBackupIndex: ${logging.file.max_backup_index}
     maxFileSize: ${logging.file.max_file_size}
     file: ${path.logs}/${cluster.name}_index_search_slowlog.log
-    maxBackupIndex: 10
     layout:
       type: pattern
       conversionPattern: "[%d{ISO8601}][%-5p][%-25c] %m%n"
@@ -56,7 +54,6 @@ appender:
     maxBackupIndex: ${logging.file.max_backup_index}
     maxFileSize: ${logging.file.max_file_size}
     file: ${path.logs}/${cluster.name}_index_indexing_slowlog.log
-    maxBackupIndex: 10
     layout:
       type: pattern
       conversionPattern: "[%d{ISO8601}][%-5p][%-25c] %m%n"
