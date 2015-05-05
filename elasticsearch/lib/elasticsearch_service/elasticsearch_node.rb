@@ -58,7 +58,21 @@ class VCAP::Services::ElasticSearch::Node
     end
 
     def kill(sig=9)
+      Process.detach(pid)
       Process.kill(sig, pid) if running?
+    end
+
+    def wait_killed(timeout=5, interval=0.2)
+      begin
+        Timeout::timeout(timeout) do
+          while running? do
+            sleep interval
+          end
+        end
+      rescue Timeout::Error
+        return false
+      end
+      true
     end
   end
 
@@ -89,10 +103,6 @@ class VCAP::Services::ElasticSearch::Node
     @mutex = Mutex.new
     
     @managed_services = []
-
-    # always use the first free port for master instance
-    master_ports = fetch_ports
-    start_master_instance(master_ports)
     
     %w(INT TERM).each{|signal|
       Signal.trap(signal) {
@@ -106,18 +116,30 @@ class VCAP::Services::ElasticSearch::Node
     @capacity_lock.synchronize do
       ProvisionedService.all.each do |provisioned_service|
         delete_ports({:tcp => provisioned_service.tcp_port, :http => provisioned_service.http_port})
-        if provisioned_service.listening?
-          @logger.info("Service #{provisioned_service.name} already listening on http port #{provisioned_service.http_port} transport port #{provisioned_service.tcp_port}")
-          next
-        end
+
         begin
-          start_instance(provisioned_service, false)
-          unless provisioned_service.save
-            provisioned_service.kill
-            raise "Couldn't save pid (#{provisioned_service.pid})"
+          port_accupied, pid = false, nil
+
+          if provisioned_service.listening?
+            port_accupied = true
+            pid = pid_by_keyword(provisioned_service.name)
+          else
+            pid = start_instance(provisioned_service, false)
           end
+
+          if (pid.nil?)
+            @logger.error("can\'t start the provision_service: #{provisioned_service.name}")
+            @logger.error("The provisioned_service can't start, the port #{provisioned_service.http_port} is occupied, service: #{provisioned_service.name} ") if port_accupied
+            next
+          else
+            provisioned_service.pid = pid.to_i
+            raise "Cannot save provision_service #{provisioned_service.name} with pid: #{provisioned_service.pid}" unless provisioned_service.save
+            @logger.info("service #{provisioned_service.name} is already ran with pid: #{pid}") if port_accupied
+          end
+
           @capacity -= 1
         rescue => e
+          provisioned_service.kill
           @logger.error("Error starting service #{provisioned_service.name}: #{e}")
         end
       end
@@ -127,19 +149,9 @@ class VCAP::Services::ElasticSearch::Node
   def shutdown
     super
     ProvisionedService.all.each do |service|
-      @logger.info("Shutting down #{service}")
       stop_service(service)
     end
 
-    stop_master_node
-  end
-  
-  def stop_master_node
-    pid_file = pid_file('master')
-    return unless is_process_running?(pid_file)
-
-    pid = File.read(pid_file)
-    Process.kill(9, pid.to_i)
   end
 
   def announcement
@@ -153,7 +165,7 @@ class VCAP::Services::ElasticSearch::Node
   def all_bindings_list
     list = []
     ProvisionedService.all.each do |ps|
-      if managed_services.include?(ps.name)
+      if @managed_services.include?(ps.name)
         begin
           url = "http://#{ps.username}:#{ps.password}@#{@host_name}:#{ps.http_port}/_nodes/#{ps.name}"
           response = ''
@@ -172,6 +184,7 @@ class VCAP::Services::ElasticSearch::Node
         end
       end
     end
+    @logger.info("[all_bindings_list]: #{list}")
     list
   end
 
@@ -230,19 +243,23 @@ class VCAP::Services::ElasticSearch::Node
 
     provisioned_service.plan = plan
     pid = start_instance(provisioned_service, true)
-    return if pid.nil?
-    
-    unless provisioned_service.pid && provisioned_service.save
-      cleanup_service(provisioned_service)
-      raise "Could not save entry: #{provisioned_service.errors.pretty_inspect}"
+    if pid.nil?
+      @logger.error("Failed to provision service with plan: #{plan}, credentials: #{credentials}")
+      return
     end
+    
+    raise "Could not save entry: #{provisioned_service.errors.pretty_inspect}" unless provisioned_service.save
+
     @managed_services << provisioned_service.name
     @capacity -= 1
     response = get_credentials(provisioned_service)
     @logger.debug("response: #{response}")
+
     return response
   rescue => e
-    @logger.warn(e)
+    @logger.error("Error provision instance: #{e}")
+    cleanup_service(provisioned_service)
+    raise e
   end
 
   def unprovision(name, credentials = nil)
@@ -281,21 +298,17 @@ class VCAP::Services::ElasticSearch::Node
 
   def start_instance(provisioned_service, new_service)
     if !new_service && (provisioned_service.http_port.nil? || provisioned_service.tcp_port.nil? || provisioned_service.cluster_name.nil?)
-      @logger.warn("Either tcp port or http port is empty, skip the service #{provisioned_service.name}.")
-      return
+      raise "Either tcp port or http port is empty, skip the service #{provisioned_service.name}."
     end
     
     if (new_service)
-      configs = setup_server(provisioned_service.name, {})
+      configs = setup_server(provisioned_service)
       
       provisioned_service.http_port = configs['http.port']
       provisioned_service.tcp_port = configs['transport.tcp.port']
       provisioned_service.cluster_name = configs['cluster.name']
     else
-      configs = setup_server(provisioned_service.name, {
-        'http.port' => provisioned_service.http_port,
-        'transport.tcp.port' => provisioned_service.tcp_port
-      })      
+      configs = setup_server(provisioned_service)
     end
 
     pid_file = pid_file(provisioned_service.name)
@@ -309,8 +322,11 @@ class VCAP::Services::ElasticSearch::Node
     @logger.info("Service #{provisioned_service.name} running with pid #{pid}, status = #{status}")
 
     # info per instance from runtime
-    provisioned_service.pid = pid.to_i
-    return provisioned_service.pid
+    if pid
+      provisioned_service.pid = pid.to_i
+      return provisioned_service.pid
+    end
+    nil
   end
 
   def elasticsearch_health_stats(instance)
@@ -388,8 +404,8 @@ class VCAP::Services::ElasticSearch::Node
   def cleanup_service(provisioned_service)
     @logger.debug("Killing #{provisioned_service.name} started with pid #{provisioned_service.pid}")
 
-    stop_service(provisioned_service)
-    raise "Could not cleanup service: #{provisioned_service.errors.pretty_inspect}" unless provisioned_service.new? || provisioned_service.destroy
+    stop_service(provisioned_service, :SIGKILL)
+    raise "Could not cleanup service: #{provisioned_service.errors.pretty_inspect}" unless provisioned_service.destroy
 
     EM.defer do
       FileUtils.rm_rf(service_dir(provisioned_service.name))
@@ -403,12 +419,15 @@ class VCAP::Services::ElasticSearch::Node
     @logger.warn(e)
   end
 
-  def stop_service(service)
+  def stop_service(service, signal=:SIGTERM)
     begin
       @logger.info("Stopping #{service.name} HTTP PORT #{service.http_port} TCP PORT #{service.tcp_port} PID #{service.pid}")
-      service.kill(:SIGTERM) if service.running?
+      service.kill(signal)
+#      service.wait_killed ?
+#        @logger.debug("elasticsearch pid:#{service.pid} terminated") :
+#        @logger.error("Timeout to terminate elasticsearch pid:#{service.pid}")
     rescue => e
-      @logger.error("Error stopping service #{service.name} HTTP PORT #{service.http_port} TCP PORT #{service.tcp_port} PID #{service.pid}: #{e}")
+      @logger.error("Failed to stop service #{service.name} HTTP PORT #{service.http_port} TCP PORT #{service.tcp_port} PID #{service.pid}: #{e}")
     end
   end
 
@@ -437,13 +456,15 @@ class VCAP::Services::ElasticSearch::Node
     end
   end
 
-  def setup_server(instance_id, instance_config)
+  def setup_server(instance)
+    instance_id = instance.name
+
     conf_dir = config_dir(instance_id)
     data_dir = data_dir(instance_id)
     work_dir = work_dir(instance_id)
     logs_dir = log_dir(instance_id)
 
-    ports = if instance_config['http.port'].nil? || instance_config['transport.tcp.port'].nil?
+    ports = if instance.http_port.nil? || instance.tcp_port.nil?
       fetch_ports()
     end
     
@@ -453,14 +474,15 @@ class VCAP::Services::ElasticSearch::Node
       'path.data' => data_dir,
       'path.logs' => logs_dir,
       'http.enabled' => true,
-      'http.port' => instance_config['http.port'] || ports[:http],
-      'transport.tcp.port' => instance_config['transport.tcp.port'] || ports[:tcp],
-      'node.name' => instance_id
+      'http.port' => instance.http_port || ports[:http],
+      'transport.tcp.port' => instance.tcp_port || ports[:tcp],
+      'node.name' => instance_id,
+      'cluster.name' => instance.cluster_name || UUIDTools::UUID.random_create.to_s
     }
     
     es_default_conf = @options[:elasticsearch]
-    final_conf = es_default_conf.merge(other_conf).merge(instance_config)
-    
+    final_conf = es_default_conf.merge(other_conf)
+
     FileUtils.mkdir_p(final_conf['path.conf'])
     FileUtils.mkdir_p(final_conf['path.data'])
     FileUtils.mkdir_p(final_conf['path.logs'])
@@ -471,40 +493,17 @@ class VCAP::Services::ElasticSearch::Node
     final_conf
   end
   
-  def start_master_instance(ports)
-    begin
-      # port is opened?
-      TCPSocket.open('localhost', ports[:http]).close      
-      return
-    rescue => e
-    end
-    
-    pid_file = pid_file('master')
-    configs = setup_server('master', {
-      'path.data' => @master_data_dir,
-      'node.master' => true,
-      'node.data' => true,
-      'http.enabled' => true,
-      'http.port' => ports[:http],
-      'transport.tcp.port' => ports[:tcp]
-    })
-
-    `export ES_HEAP_SIZE="#{@max_memory}m" && #{@elasticsearch_path} -p #{pid_file} -Des.config=#{configs['config.file']} -d`
-    status = $?
-    @logger.debug("Master Instance start up finished, status = #{status}")
-
-    pid = `[ -f #{pid_file} ] && cat #{pid_file}`
-    status = $?
-    @logger.debug("Master Instance running with pid #{pid}")
-
-    return pid.to_i
+  # es is one java process
+  def pid_by_keyword(keyword)
+    val = `ps -f -C java | grep #{keyword} | awk '{ print $2 }'`
+    return val.strip if val
   end
 
   def is_process_running?(pid_file)
     return false unless File.file?(pid_file)
     # get the file content
     pid = File.read(pid_file)
-    system "ps -p #{pid } > /dev/null"
+    system "ps -p #{pid} > /dev/null"
   end
   
   def get_es_path(es_path)
