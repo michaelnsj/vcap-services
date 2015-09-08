@@ -268,7 +268,8 @@ class VCAP::Services::ElasticSearch::Node
 
     cleanup_service(provisioned_service)
     @managed_services.delete(provisioned_service.name)
-    
+    @capacity += 1
+
     @logger.debug("Successfully fulfilled unprovision request: #{name}.")
   end
 
